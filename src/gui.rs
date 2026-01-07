@@ -555,7 +555,7 @@ fn detect_default_route_interface() -> Option<String> {
     None
 }
 
-impl eframe::App for RustScanApp {
+impl eframe::App for ScannrApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut state = self.state.lock().unwrap();
 
