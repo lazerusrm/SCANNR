@@ -2,8 +2,8 @@
 use crate::input::ScanOrder;
 use crate::port_strategy::PortStrategy;
 use crate::scanner::Scanner;
-use crate::topology::widget::{TopologyWidget, WidgetTopologyStats};
-use crate::topology::LayoutType;
+use crate::topology::widget::TopologyWidget;
+use crate::topology::{LayoutType, TopologyStats};
 use egui::{Color32, RichText, Visuals};
 use ipnetwork::IpNetwork;
 use serde::Serialize;
@@ -185,7 +185,7 @@ pub struct AppState {
     pub export_feedback: ExportFeedback,
     pub topology_widget: Option<TopologyWidget>,
     pub layout_type: LayoutType,
-    pub topology_stats: Option<WidgetTopologyStats>,
+    pub topology_stats: Option<TopologyStats>,
     pub scan_mode: ScanMode,
     pub advanced_settings_open: bool,
     pub batch_size: u16,

@@ -21,7 +21,7 @@ pub use geo::GeoInfo;
 pub use graph::{TopologyGraph, TopologyGraphBuilder};
 pub use layout::{LayoutConfig, LayoutEngine};
 pub use renderer::{LODLevel, RenderConfig, TopologyRenderer};
-pub use widget::{LayoutType, ForceDirectedConfig, InteractionState, TopologyWidget};
+pub use widget::{LayoutType, TopologyWidget};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct NodeId(pub IpAddr);
@@ -92,6 +92,8 @@ pub struct TopologyStats {
     pub router_count: usize,
     pub server_count: usize,
     pub iot_count: usize,
+    pub firewall_count: usize,
+    pub unknown_count: usize,
     pub average_latency_ms: f32,
     pub highest_risk_node: Option<NodeId>,
     pub highest_risk_score: u8,
@@ -103,6 +105,8 @@ impl TopologyStats {
         let mut router_count = 0;
         let mut server_count = 0;
         let mut iot_count = 0;
+        let mut firewall_count = 0;
+        let mut unknown_count = 0;
         let mut highest_risk_node = None;
         let mut highest_risk_score = 0u8;
         let mut total_latency = 0u64;
@@ -114,9 +118,19 @@ impl TopologyStats {
                 *count += 1;
 
                 match node_data.device_type {
-                    DeviceType::Router => router_count += 1,
-                    DeviceType::Server => server_count += 1,
-                    DeviceType::IoT | DeviceType::Camera => iot_count += 1,
+                    DeviceType::Router | DeviceType::Switch | DeviceType::AccessPoint => {
+                        router_count += 1
+                    }
+                    DeviceType::Server
+                    | DeviceType::WebServer
+                    | DeviceType::Database
+                    | DeviceType::MailServer => server_count += 1,
+                    DeviceType::Firewall | DeviceType::FirewallAppliance => firewall_count += 1,
+                    DeviceType::IoT
+                    | DeviceType::Camera
+                    | DeviceType::Thermostat
+                    | DeviceType::Light => iot_count += 1,
+                    DeviceType::Unknown => unknown_count += 1,
                     _ => {}
                 }
 
@@ -150,6 +164,8 @@ impl TopologyStats {
             router_count,
             server_count,
             iot_count,
+            firewall_count,
+            unknown_count,
             average_latency_ms: average_latency,
             highest_risk_node,
             highest_risk_score,

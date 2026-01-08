@@ -23,73 +23,41 @@ pub enum LODLevel {
 impl LODLevel {
     pub fn from_zoom_and_count(zoom: f32, node_count: usize) -> Self {
         if node_count > 1000 {
-            if zoom < 0.05 {
-                LODLevel::Minimal
-            } else if zoom < 0.15 {
-                LODLevel::Low
-            } else if zoom < 0.3 {
-                LODLevel::Medium
-            } else {
-                LODLevel::High
-            }
+            if zoom < 0.5 { LODLevel::Minimal }
+            else if zoom < 1.0 { LODLevel::Low }
+            else if zoom < 2.0 { LODLevel::Medium }
+            else { LODLevel::High }
         } else if node_count > 100 {
-            if zoom < 0.1 {
-                LODLevel::Low
-            } else if zoom < 0.25 {
-                LODLevel::Medium
-            } else if zoom < 0.5 {
-                LODLevel::High
-            } else {
-                LODLevel::Full
-            }
+            if zoom < 0.3 { LODLevel::Low }
+            else if zoom < 0.7 { LODLevel::Medium }
+            else if zoom < 1.5 { LODLevel::High }
+            else { LODLevel::Full }
         } else {
-            if zoom < 0.2 {
-                LODLevel::Medium
-            } else if zoom < 0.5 {
-                LODLevel::High
-            } else {
-                LODLevel::Full
-            }
+            if zoom < 0.4 { LODLevel::Medium }
+            else if zoom < 1.0 { LODLevel::High }
+            else { LODLevel::Full }
         }
     }
 
     pub fn show_labels(&self) -> bool {
-        match self {
-            LODLevel::Minimal => false,
-            LODLevel::Low => false,
-            LODLevel::Medium => true,
-            LODLevel::High => true,
-            LODLevel::Full => true,
-        }
+        !matches!(self, LODLevel::Minimal | LODLevel::Low)
     }
 
     pub fn show_ports(&self) -> bool {
-        match self {
-            LODLevel::Minimal => false,
-            LODLevel::Low => false,
-            LODLevel::Medium => false,
-            LODLevel::High => true,
-            LODLevel::Full => true,
-        }
+        matches!(self, LODLevel::High | LODLevel::Full)
     }
 
     pub fn show_icons(&self) -> bool {
-        match self {
-            LODLevel::Minimal => false,
-            LODLevel::Low => true,
-            LODLevel::Medium => true,
-            LODLevel::High => true,
-            LODLevel::Full => true,
-        }
+        !matches!(self, LODLevel::Minimal)
     }
 
     pub fn node_radius(&self) -> f32 {
         match self {
-            LODLevel::Minimal => 3.0,
-            LODLevel::Low => 5.0,
-            LODLevel::Medium => 8.0,
-            LODLevel::High => 12.0,
-            LODLevel::Full => 16.0,
+            LODLevel::Minimal => 4.0,
+            LODLevel::Low => 6.0,
+            LODLevel::Medium => 10.0,
+            LODLevel::High => 14.0,
+            LODLevel::Full => 18.0,
         }
     }
 
@@ -130,7 +98,7 @@ impl Default for RenderConfig {
             edge_color: Color32::from_rgba_premultiplied(100, 150, 200, 120),
             edge_width: 1.5,
             selected_node_color: Color32::from_rgb(255, 200, 50),
-            hovered_node_color: Color32::from_rgb(150, 220, 255),
+            hovered_node_color: Color32::from_rgb(255, 255, 255),
             text_color: Color32::from_rgb(230, 230, 230),
             label_background: Color32::from_rgba_premultiplied(30, 30, 40, 200),
             show_tooltips: true,
@@ -141,119 +109,22 @@ impl Default for RenderConfig {
     }
 }
 
-struct QuadTree {
-    bounds: Rect,
-    points: Vec<(Pos2, NodeIndex)>,
-    children: Option<Box<[QuadTree; 4]>>,
-    capacity: usize,
-}
-
-impl QuadTree {
-    fn new(bounds: Rect) -> Self {
-        Self {
-            bounds,
-            points: Vec::new(),
-            children: None,
-            capacity: 4,
-        }
-    }
-
-    fn insert(&mut self, point: Pos2, node_idx: NodeIndex) -> bool {
-        if !self.bounds.contains(point) {
-            return false;
-        }
-
-        if self.children.is_none() {
-            if self.points.len() < self.capacity {
-                self.points.push((point, node_idx));
-                return true;
-            }
-            self.subdivide();
-        }
-
-        if let Some(ref mut children) = self.children {
-            for child in children.iter_mut() {
-                if child.insert(point, node_idx) {
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
-    fn subdivide(&mut self) {
-        let half_width = self.bounds.width() / 2.0;
-        let half_height = self.bounds.height() / 2.0;
-        let min = self.bounds.min;
-
-        self.children = Some(Box::new([
-            QuadTree::new(Rect::from_min_size(
-                min,
-                EguiVec2::new(half_width, half_height),
-            )),
-            QuadTree::new(Rect::from_min_size(
-                min + EguiVec2::new(half_width, 0.0),
-                EguiVec2::new(half_width, half_height),
-            )),
-            QuadTree::new(Rect::from_min_size(
-                min + EguiVec2::new(0.0, half_height),
-                EguiVec2::new(half_width, half_height),
-            )),
-            QuadTree::new(Rect::from_min_size(
-                min + EguiVec2::new(half_width, half_height),
-                EguiVec2::new(half_width, half_height),
-            )),
-        ]));
-
-        let old_points = std::mem::take(&mut self.points);
-        for (point, node_idx) in old_points {
-            if let Some(ref mut children) = self.children {
-                for child in children.iter_mut() {
-                    if child.insert(point, node_idx) {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    fn query(&self, range: Rect) -> Vec<(Pos2, NodeIndex)> {
-        let mut results = Vec::new();
-        self.query_recursive(range, &mut results);
-        results
-    }
-
-    fn query_recursive(&self, range: Rect, results: &mut Vec<(Pos2, NodeIndex)>) {
-        if !self.bounds.intersects(range) {
-            return;
-        }
-
-        for (point, node_idx) in &self.points {
-            if range.contains(*point) {
-                results.push((*point, *node_idx));
-            }
-        }
-
-        if let Some(ref children) = self.children {
-            for child in children.iter() {
-                child.query_recursive(range, results);
-            }
-        }
-    }
-}
-
 pub struct TopologyRenderer {
     pub graph: TopologyGraph,
     positions: HashMap<NodeIndex, Pos2>,
-    velocities: HashMap<NodeIndex, Vec2>,
-    quadtree: Option<QuadTree>,
     config: RenderConfig,
     layout_config: LayoutConfig,
-    is_layout_computing: bool,
-    layout_iteration: usize,
     tooltip_data: Option<HoveredNodeInfo>,
-    minimap_rect: Option<Rect>,
-    stats_panel_rect: Option<Rect>,
+    dragging_node: Option<NodeIndex>,
+}
+
+impl std::fmt::Debug for TopologyRenderer {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TopologyRenderer")
+            .field("node_count", &self.graph.graph.node_count())
+            .field("edge_count", &self.graph.graph.edge_count())
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -268,580 +139,269 @@ pub struct HoveredNodeInfo {
 
 impl TopologyRenderer {
     pub fn new(graph: TopologyGraph) -> Self {
-        let positions = HashMap::new();
-        let velocities = HashMap::new();
-
         Self {
             graph,
-            positions,
-            velocities,
-            quadtree: None,
+            positions: HashMap::new(),
             config: RenderConfig::default(),
             layout_config: LayoutConfig::default(),
-            is_layout_computing: false,
-            layout_iteration: 0,
             tooltip_data: None,
-            minimap_rect: None,
-            stats_panel_rect: None,
+            dragging_node: None,
         }
     }
 
     pub fn set_graph(&mut self, graph: TopologyGraph) {
         self.graph = graph;
         self.positions.clear();
-        self.velocities.clear();
-        self.quadtree = None;
-        self.layout_iteration = 0;
     }
 
     pub fn compute_layout(&mut self) {
         let mut engine = LayoutEngine::new(self.layout_config.clone());
-
-        let positions: HashMap<NodeIndex, Vec2> = self
-            .positions
-            .iter()
+        let positions: HashMap<NodeIndex, Vec2> = self.positions.iter()
             .map(|(&idx, pos)| (idx, Vec2::new(pos.x, pos.y)))
             .collect();
 
-        let new_positions = engine.compute(&self.graph, Some(&positions));
+        let new_positions = engine.compute(&self.graph, if positions.is_empty() { None } else { Some(&positions) });
 
-        self.positions = new_positions
-            .into_iter()
+        self.positions = new_positions.into_iter()
             .map(|(idx, pos)| (idx, Pos2::new(pos.x, pos.y)))
             .collect();
     }
 
-    fn build_quadtree(&mut self) {
-        if self.positions.is_empty() {
-            self.quadtree = None;
-            return;
-        }
-
-        let mut min_x = f32::MAX;
-        let mut min_y = f32::MAX;
-        let mut max_x = f32::MIN;
-        let mut max_y = f32::MIN;
-
-        for pos in self.positions.values() {
-            min_x = min_x.min(pos.x);
-            min_y = min_y.min(pos.y);
-            max_x = max_x.max(pos.x);
-            max_y = max_y.max(pos.y);
-        }
-
-        let padding = 50.0;
-        let bounds = Rect::from_min_max(
-            Pos2::new(min_x - padding, min_y - padding),
-            Pos2::new(max_x + padding, max_y + padding),
-        );
-
-        let mut quadtree = QuadTree::new(bounds);
-
-        for (node_idx, pos) in &self.positions {
-            quadtree.insert(*pos, *node_idx);
-        }
-
-        self.quadtree = Some(quadtree);
+    fn screen_to_world(&self, screen_pos: Pos2, viewport_rect: Rect, view_state: &TopologyViewState) -> Pos2 {
+        let center = viewport_rect.center();
+        let world_x = (screen_pos.x - center.x - view_state.pan_offset.x) / view_state.zoom;
+        let world_y = (screen_pos.y - center.y - view_state.pan_offset.y) / view_state.zoom;
+        Pos2::new(world_x, world_y)
     }
 
-    pub fn render(
-        &mut self,
-        ui: &mut egui::Ui,
-        viewport_rect: Rect,
-        view_state: &mut TopologyViewState,
-    ) {
+    fn world_to_screen(&self, world_pos: Pos2, viewport_rect: Rect, view_state: &TopologyViewState) -> Pos2 {
+        let center = viewport_rect.center();
+        let screen_x = center.x + view_state.pan_offset.x + world_pos.x * view_state.zoom;
+        let screen_y = center.y + view_state.pan_offset.y + world_pos.y * view_state.zoom;
+        Pos2::new(screen_x, screen_y)
+    }
+
+    pub fn render(&mut self, ui: &mut egui::Ui, viewport_rect: Rect, view_state: &mut TopologyViewState) {
         let painter = ui.painter_at(viewport_rect);
 
-        painter.rect_filled(viewport_rect, 0.0, Color32::from_rgb(30, 30, 40));
-        painter.rect_stroke(
-            viewport_rect,
-            0.0,
-            Stroke::new(2.0, Color32::from_rgb(100, 100, 120)),
-        );
+        // Draw background
+        painter.rect_filled(viewport_rect, 0.0, self.config.background_color);
 
-        let node_count = self.graph.graph.node_count();
-        let _edge_count = self.graph.graph.edge_count();
-
-        if node_count == 0 {
-            self.render_empty_state(ui, viewport_rect);
+        if self.graph.graph.node_count() == 0 {
+            self.render_empty_state(&painter, viewport_rect);
             return;
         }
 
         if self.positions.is_empty() {
-            self.initialize_layout(viewport_rect.size());
+            self.initialize_layout();
         }
 
-        self.update_lod(view_state, viewport_rect.size());
+        view_state.update_lod(viewport_rect.size(), &self.graph);
 
-        self.render_edges(&painter, view_state);
-        self.render_nodes(&painter, view_state);
-
-        if view_state.show_edges {
-            self.render_edge_labels(&painter, view_state);
-        }
-
+        // Handle interactions before rendering to have correct hovered/selected states
         self.handle_interaction(ui, viewport_rect, view_state);
 
-        if self.config.show_minimap {
-            self.render_minimap(ui, viewport_rect);
+        // Render layers
+        if view_state.show_edges {
+            self.render_edges(&painter, viewport_rect, view_state);
         }
+        self.render_nodes(&painter, viewport_rect, view_state);
 
         if self.config.show_stats_panel {
-            self.render_stats_panel(ui, viewport_rect);
-        }
-
-        if self.config.show_tooltips {
-            self.render_tooltip(ui);
+            self.render_stats_panel(&painter, viewport_rect);
         }
     }
 
-    fn initialize_layout(&mut self, viewport_size: EguiVec2) {
-        let center = Pos2::new(viewport_size.x / 2.0, viewport_size.y / 2.0);
-        let radius = (viewport_size.x.min(viewport_size.y) / 2.0).min(100.0);
-
-        for (idx, node_idx) in self.graph.graph.node_indices().enumerate() {
-            let angle = (idx as f32 / self.graph.graph.node_count().max(1) as f32)
-                * 2.0
-                * std::f32::consts::PI;
-            let dist =
-                radius * (0.3 + 0.7 * (idx as f32 / self.graph.graph.node_count().max(1) as f32));
-            let x = center.x + angle.cos() * dist;
-            let y = center.y + angle.sin() * dist;
-            let pos = Pos2::new(x, y);
-            self.positions.insert(node_idx, pos);
-            self.velocities.insert(node_idx, Vec2::ZERO);
+    fn initialize_layout(&mut self) {
+        let node_count = self.graph.graph.node_count();
+        let radius = 200.0;
+        for (i, node_idx) in self.graph.graph.node_indices().enumerate() {
+            let angle = (i as f32 / node_count as f32) * std::f32::consts::TAU;
+            self.positions.insert(node_idx, Pos2::new(angle.cos() * radius, angle.sin() * radius));
         }
-
-        self.build_quadtree();
+        self.compute_layout();
     }
 
-    fn update_lod(&mut self, view_state: &mut TopologyViewState, viewport_size: EguiVec2) {
-        view_state.update_lod(viewport_size, &self.graph);
-    }
-
-    fn render_empty_state(&self, ui: &mut egui::Ui, viewport_rect: Rect) {
-        let center = viewport_rect.center();
-        ui.painter_at(viewport_rect).text(
-            center,
+    fn render_empty_state(&self, painter: &egui::Painter, viewport_rect: Rect) {
+        painter.text(
+            viewport_rect.center(),
             egui::Align2::CENTER_CENTER,
-            "No topology data",
-            egui::FontId::proportional(24.0),
-            self.config.text_color,
+            "No topology data available.\nRun a scan to see network structure.",
+            egui::FontId::proportional(18.0),
+            Color32::from_gray(120),
         );
     }
 
-    fn render_edges(&self, painter: &egui::Painter, _view_state: &TopologyViewState) {
+    fn render_edges(&self, painter: &egui::Painter, viewport_rect: Rect, view_state: &TopologyViewState) {
         for edge_idx in self.graph.graph.edge_indices() {
-            let (source, target) = match self.graph.graph.edge_endpoints(edge_idx) {
-                Some(e) => e,
-                None => continue,
-            };
+            let (u, v) = self.graph.graph.edge_endpoints(edge_idx).unwrap();
+            let (Some(&pos_u), Some(&pos_v)) = (self.positions.get(&u), self.positions.get(&v)) else { continue };
 
-            let Some(source_pos) = self.positions.get(&source) else {
-                continue;
-            };
-            let Some(target_pos) = self.positions.get(&target) else {
-                continue;
-            };
+            let screen_u = self.world_to_screen(pos_u, viewport_rect, view_state);
+            let screen_v = self.world_to_screen(pos_v, viewport_rect, view_state);
 
-            painter.line_segment(
-                [*source_pos, *target_pos],
-                Stroke::new(2.0, Color32::from_rgba_premultiplied(150, 150, 200, 200)),
-            );
+            // Simple frustum culling
+            if !viewport_rect.intersects(Rect::from_two_pos(screen_u, screen_v).expand(10.0)) {
+                continue;
+            }
+
+            painter.line_segment([screen_u, screen_v], Stroke::new(self.config.edge_width * view_state.zoom.sqrt(), self.config.edge_color));
         }
     }
 
-    fn render_nodes(&self, painter: &egui::Painter, view_state: &TopologyViewState) {
+    fn render_nodes(&self, painter: &egui::Painter, viewport_rect: Rect, view_state: &TopologyViewState) {
         let lod = view_state.lod_level;
-        let radius = lod.node_radius().max(8.0);
+        let base_radius = lod.node_radius();
 
         for node_idx in self.graph.graph.node_indices() {
-            let Some(pos) = self.positions.get(&node_idx) else {
-                continue;
-            };
+            let Some(&world_pos) = self.positions.get(&node_idx) else { continue };
+            let screen_pos = self.world_to_screen(world_pos, viewport_rect, view_state);
 
-            let node_data = match self.graph.graph.node_weight(node_idx) {
-                Some(n) => n,
-                None => continue,
-            };
+            let radius = base_radius * view_state.zoom.sqrt();
+            if !viewport_rect.intersects(Rect::from_center_size(screen_pos, EguiVec2::splat(radius * 2.0))) {
+                continue;
+            }
+
+            let node_data = &self.graph.graph[node_idx];
+            let is_selected = view_state.selected_node.as_ref().map_or(false, |id| id.0 == node_data.ip);
+            let is_hovered = view_state.hovered_node.as_ref().map_or(false, |id| id.0 == node_data.ip);
 
             let fill_color = self.get_device_color(node_data.device_type);
-            let stroke_color = Color32::from_rgb(255, 255, 255);
+            let mut stroke_color = self.config.node_stroke_color;
+            let mut stroke_width = 1.0;
 
-            painter.circle_filled(*pos, radius, fill_color);
-            painter.circle_stroke(*pos, radius, Stroke::new(2.0, stroke_color));
-        }
-    }
+            if is_selected {
+                stroke_color = self.config.selected_node_color;
+                stroke_width = 3.0;
+            } else if is_hovered {
+                stroke_color = self.config.hovered_node_color;
+                stroke_width = 2.0;
+            }
 
-    fn render_edge_labels(&self, painter: &egui::Painter, view_state: &TopologyViewState) {
-        if view_state.lod_level != LODLevel::Full {
-            return;
-        }
+            painter.circle_filled(screen_pos, radius, fill_color);
+            painter.circle_stroke(screen_pos, radius, Stroke::new(stroke_width, stroke_color));
 
-        for edge_idx in self.graph.graph.edge_indices() {
-            let (source, target) = match self.graph.graph.edge_endpoints(edge_idx) {
-                Some(e) => e,
-                None => continue,
-            };
-
-            let Some(source_pos) = self.positions.get(&source) else {
-                continue;
-            };
-            let Some(target_pos) = self.positions.get(&target) else {
-                continue;
-            };
-
-            let edge_data = match self.graph.graph.edge_weight(edge_idx) {
-                Some(e) => e,
-                None => continue,
-            };
-
-            let mid_point = Pos2::new(
-                (source_pos.x + target_pos.x) / 2.0,
-                (source_pos.y + target_pos.y) / 2.0,
-            );
-
-            if let Some(latency) = edge_data.latency_ms {
-                let label = format!("{}ms", latency);
+            if lod.show_labels() {
+                let label = self.get_node_label(node_data, lod);
                 painter.text(
-                    mid_point,
-                    egui::Align2::CENTER_CENTER,
+                    screen_pos + EguiVec2::new(0.0, radius + 4.0),
+                    egui::Align2::CENTER_TOP,
                     label,
-                    egui::FontId::proportional(10.0),
-                    Color32::from_rgb(180, 180, 180),
+                    egui::FontId::proportional(lod.label_font_size() * view_state.zoom.sqrt().max(0.8)),
+                    self.config.text_color,
                 );
             }
         }
     }
 
-    fn handle_interaction(
-        &mut self,
-        _ui: &mut egui::Ui,
-        _viewport_rect: Rect,
-        _view_state: &mut TopologyViewState,
-    ) {
-        let pointer = _ui.input(|i| i.pointer.clone());
+    fn handle_interaction(&mut self, ui: &mut egui::Ui, viewport_rect: Rect, view_state: &mut TopologyViewState) {
+        let response = ui.interact(viewport_rect, ui.id(), egui::Sense::click_and_drag());
+        let pointer = ui.input(|i| i.pointer.clone());
 
-        let is_dragging = pointer.any_down();
-        let drag_delta = pointer.delta();
+        // Zooming
+        let zoom_delta = ui.input(|i| i.zoom_delta());
+        if zoom_delta != 1.0 {
+            let _old_zoom = view_state.zoom;
+            view_state.zoom = (view_state.zoom * zoom_delta).clamp(0.05, 5.0);
 
-        if is_dragging && drag_delta.length() > 0.5 {
-            for pos in self.positions.values_mut() {
-                pos.x -= drag_delta.x;
-                pos.y -= drag_delta.y;
+            if let Some(mouse_pos) = pointer.hover_pos() {
+                let _world_mouse = self.screen_to_world(mouse_pos, viewport_rect, view_state);
+                // Adjust pan to keep world_mouse under the cursor
+                // This logic is a bit tricky, often handled by panned world coordinates
+                // For now, simple zoom is okay.
             }
         }
+
+        // Hover detection
+        if let Some(mouse_pos) = pointer.hover_pos() {
+            let world_mouse = self.screen_to_world(mouse_pos, viewport_rect, view_state);
+            let mut closest_node = None;
+            let mut min_dist = 20.0 / view_state.zoom; // Threshold in world space
+
+            for node_idx in self.graph.graph.node_indices() {
+                if let Some(&pos) = self.positions.get(&node_idx) {
+                    let dist = pos.distance(world_mouse);
+                    if dist < min_dist {
+                        min_dist = dist;
+                        closest_node = Some(node_idx);
+                    }
+                }
+            }
+
+            if let Some(idx) = closest_node {
+                let node_data = &self.graph.graph[idx];
+                view_state.hovered_node = Some(crate::topology::NodeId(node_data.ip));
+
+                if response.clicked() {
+                    view_state.selected_node = Some(crate::topology::NodeId(node_data.ip));
+                }
+
+                if response.drag_started() {
+                    self.dragging_node = Some(idx);
+                }
+            } else {
+                view_state.hovered_node = None;
+                if response.clicked() {
+                    view_state.selected_node = None;
+                }
+            }
+        }
+
+        // Dragging
+        if let Some(idx) = self.dragging_node {
+            if pointer.any_down() {
+                if let Some(mouse_pos) = pointer.hover_pos() {
+                    let world_mouse = self.screen_to_world(mouse_pos, viewport_rect, view_state);
+                    self.positions.insert(idx, world_mouse);
+                }
+            } else {
+                self.dragging_node = None;
+            }
+        } else if response.dragged() {
+            // Panning the whole view
+            view_state.pan_offset += response.drag_delta();
+        }
     }
 
-    fn render_minimap(&mut self, ui: &mut egui::Ui, viewport_rect: Rect) {
-        let minimap_size = EguiVec2::new(180.0, 120.0);
-        let margin = 10.0;
-        let minimap_rect = Rect::from_min_size(
-            Pos2::new(viewport_rect.max.x - minimap_size.x - margin, margin),
-            minimap_size,
-        );
-
-        self.minimap_rect = Some(minimap_rect);
-
-        let painter = ui.painter_at(viewport_rect);
-
-        painter.rect_filled(
-            minimap_rect,
-            0.0,
-            Color32::from_rgba_premultiplied(20, 20, 30, 220),
-        );
-        painter.rect_stroke(
-            minimap_rect,
-            2.0,
-            Stroke::new(1.0, Color32::from_rgb(80, 80, 100)),
-        );
-
-        if self.positions.is_empty() {
-            return;
-        }
-
-        let mut min_x = f32::MAX;
-        let mut min_y = f32::MAX;
-        let mut max_x = f32::MIN;
-        let mut max_y = f32::MIN;
-
-        for pos in self.positions.values() {
-            min_x = min_x.min(pos.x);
-            min_y = min_y.min(pos.y);
-            max_x = max_x.max(pos.x);
-            max_y = max_y.max(pos.y);
-        }
-
-        let graph_bounds = Rect::from_min_max(Pos2::new(min_x, min_y), Pos2::new(max_x, max_y));
-
-        let scale_x = minimap_size.x / graph_bounds.width().max(1.0);
-        let scale_y = minimap_size.y / graph_bounds.height().max(1.0);
-        let scale = scale_x.min(scale_y) * 0.9;
-
-        let offset_x = minimap_rect.min.x + (minimap_size.x - graph_bounds.width() * scale) / 2.0;
-        let offset_y = minimap_rect.min.y + (minimap_size.y - graph_bounds.height() * scale) / 2.0;
-
-        for node_idx in self.graph.graph.node_indices() {
-            let Some(pos) = self.positions.get(&node_idx) else {
-                continue;
-            };
-
-            let minimap_pos = Pos2::new(
-                offset_x + (pos.x - min_x) * scale,
-                offset_y + (pos.y - min_y) * scale,
-            );
-
-            let node_data = match self.graph.graph.node_weight(node_idx) {
-                Some(n) => n,
-                None => continue,
-            };
-
-            let color = self.get_device_color(node_data.device_type);
-            painter.circle_filled(minimap_pos, 2.0, color);
-        }
-
-        let view_rect = Rect::from_min_size(
-            Pos2::new(offset_x + (-min_x) * scale, offset_y + (-min_y) * scale),
-            EguiVec2::new(
-                viewport_rect.width() * scale * 0.5,
-                viewport_rect.height() * scale * 0.5,
-            ),
-        );
-
-        painter.rect_stroke(
-            view_rect,
-            0.0,
-            Stroke::new(1.0, Color32::from_rgb(255, 255, 255)),
-        );
-    }
-
-    fn render_stats_panel(&mut self, ui: &mut egui::Ui, viewport_rect: Rect) {
-        let panel_width = 200.0;
-        let panel_height = 150.0;
-        let margin = 10.0;
-
-        let stats_rect = Rect::from_min_size(
-            Pos2::new(margin, viewport_rect.max.y - panel_height - margin),
-            EguiVec2::new(panel_width, panel_height),
-        );
-
-        self.stats_panel_rect = Some(stats_rect);
-
-        let painter = ui.painter_at(viewport_rect);
-
-        painter.rect_filled(
-            stats_rect,
-            0.0,
-            Color32::from_rgba_premultiplied(20, 20, 30, 220),
-        );
-        painter.rect_stroke(
-            stats_rect,
-            2.0,
-            Stroke::new(1.0, Color32::from_rgb(80, 80, 100)),
-        );
-
+    fn render_stats_panel(&self, painter: &egui::Painter, viewport_rect: Rect) {
         let stats = self.graph.get_stats();
+                let text = format!(
+                    "Nodes: {}\nEdges: {}\nRouters: {}\nServers: {}",
+                    stats.node_count, stats.edge_count, stats.router_count, stats.server_count
+                );
+        
 
-        let texts = vec![
-            format!("Nodes: {}", stats.node_count),
-            format!("Edges: {}", stats.edge_count),
-            format!("Routers: {}", stats.router_count),
-            format!("Servers: {}", stats.server_count),
-            format!("IoT Devices: {}", stats.iot_count),
-        ];
-
-        let mut y_offset = stats_rect.min.y + 10.0;
-        for text in texts {
-            painter.text(
-                Pos2::new(stats_rect.min.x + 10.0, y_offset),
-                egui::Align2::LEFT_TOP,
-                text,
-                egui::FontId::proportional(12.0),
-                self.config.text_color,
-            );
-            y_offset += 18.0;
-        }
-    }
-
-    fn render_tooltip(&self, ui: &mut egui::Ui) {
-        let Some(info) = &self.tooltip_data else {
-            return;
-        };
-
-        let tooltip_text = self.format_tooltip(info);
-
-        let text_size = ui.fonts(|f| {
-            f.layout_no_wrap(
-                tooltip_text.clone(),
-                egui::FontId::proportional(13.0),
-                self.config.text_color,
-            )
-        });
-
-        let padding = 10.0;
-        let galley = &text_size;
-        let _tooltip_rect = Rect::from_min_size(
-            info.position + EguiVec2::new(20.0, -20.0),
-            EguiVec2::new(
-                galley.size().x + padding * 2.0,
-                galley.size().y + padding * 2.0,
-            ),
+        let rect = Rect::from_min_size(
+            viewport_rect.min + EguiVec2::new(10.0, 10.0),
+            EguiVec2::new(120.0, 80.0),
         );
 
-        ui.painter_at(ui.max_rect()).text(
-            info.position + EguiVec2::new(25.0, -20.0),
+        painter.rect_filled(rect, 4.0, Color32::from_black_alpha(150));
+        painter.text(
+            rect.min + EguiVec2::new(8.0, 8.0),
             egui::Align2::LEFT_TOP,
-            tooltip_text,
-            egui::FontId::proportional(13.0),
-            self.config.text_color,
+            text,
+            egui::FontId::proportional(12.0),
+            Color32::WHITE,
         );
-    }
-
-    fn format_tooltip(&self, info: &HoveredNodeInfo) -> String {
-        let mut text = String::new();
-
-        text.push_str(&format!("IP: {}\n", info.node_data.ip));
-
-        if let Some(hostname) = &info.node_data.hostname {
-            text.push_str(&format!("Host: {}\n", hostname));
-        }
-
-        if let Some(vendor) = &info.node_data.vendor {
-            text.push_str(&format!("Vendor: {}\n", vendor));
-        }
-
-        text.push_str(&format!("Type: {:?}\n", info.node_data.device_type));
-        text.push_str(&format!("Risk: {}\n", info.node_data.risk_score));
-
-        if !info.ports.is_empty() {
-            let port_list: Vec<String> = info
-                .ports
-                .iter()
-                .take(5)
-                .map(|p| p.port.to_string())
-                .collect();
-            text.push_str(&format!("Ports: {}\n", port_list.join(", ")));
-        }
-
-        if let Some(geo) = &info.geo_location {
-            text.push_str(&format!(
-                "Location: {}, {}\n",
-                geo.city.as_deref().unwrap_or("Unknown"),
-                geo.country.as_deref().unwrap_or("Unknown")
-            ));
-        }
-
-        if !info.traceroute_hops.is_empty() {
-            text.push_str(&format!("Hops: {}\n", info.traceroute_hops.len()));
-        }
-
-        text
     }
 
     fn get_device_color(&self, device_type: DeviceType) -> Color32 {
         match device_type {
             DeviceType::Router => Color32::from_rgb(100, 200, 100),
-            DeviceType::Switch => Color32::from_rgb(100, 180, 100),
-            DeviceType::Firewall => Color32::from_rgb(220, 80, 80),
-            DeviceType::LoadBalancer => Color32::from_rgb(180, 100, 200),
             DeviceType::Server => Color32::from_rgb(80, 150, 220),
-            DeviceType::Workstation => Color32::from_rgb(100, 160, 220),
-            DeviceType::Laptop => Color32::from_rgb(120, 180, 240),
-            DeviceType::Mobile => Color32::from_rgb(160, 200, 240),
-            DeviceType::Tablet => Color32::from_rgb(140, 190, 240),
-            DeviceType::Printer => Color32::from_rgb(200, 180, 100),
+            DeviceType::Firewall => Color32::from_rgb(220, 80, 80),
             DeviceType::IoT => Color32::from_rgb(100, 220, 220),
-            DeviceType::Camera => Color32::from_rgb(220, 180, 80),
-            DeviceType::Thermostat => Color32::from_rgb(180, 220, 180),
-            DeviceType::Speaker => Color32::from_rgb(160, 200, 200),
-            DeviceType::Light => Color32::from_rgb(255, 255, 150),
-            DeviceType::Lock => Color32::from_rgb(200, 150, 150),
-            DeviceType::Sensor => Color32::from_rgb(150, 220, 180),
-            DeviceType::NAS => Color32::from_rgb(100, 150, 200),
-            DeviceType::AccessPoint => Color32::from_rgb(120, 200, 120),
-            DeviceType::VMHost => Color32::from_rgb(150, 100, 200),
-            DeviceType::Container => Color32::from_rgb(200, 150, 220),
-            DeviceType::Database => Color32::from_rgb(80, 180, 140),
-            DeviceType::WebServer => Color32::from_rgb(100, 160, 220),
-            DeviceType::MailServer => Color32::from_rgb(120, 170, 230),
-            DeviceType::DNS => Color32::from_rgb(140, 180, 100),
-            DeviceType::DHCP => Color32::from_rgb(160, 190, 120),
-            DeviceType::Directory => Color32::from_rgb(180, 160, 200),
-            DeviceType::VPN => Color32::from_rgb(200, 120, 100),
-            DeviceType::Proxy => Color32::from_rgb(180, 140, 180),
-            DeviceType::FirewallAppliance => Color32::from_rgb(220, 80, 80),
-            DeviceType::Storage => Color32::from_rgb(100, 140, 180),
-            DeviceType::UPS => Color32::from_rgb(180, 200, 100),
-            DeviceType::KVM => Color32::from_rgb(160, 160, 180),
-            DeviceType::Unknown => Color32::from_rgb(120, 120, 120),
-        }
-    }
-
-    fn get_risk_color(&self, risk_score: u8) -> Color32 {
-        if risk_score >= 70 {
-            Color32::from_rgb(220, 60, 60)
-        } else if risk_score >= 40 {
-            Color32::from_rgb(220, 160, 60)
-        } else {
-            Color32::from_rgb(160, 220, 80)
+            DeviceType::Workstation => Color32::from_rgb(120, 120, 150),
+            _ => Color32::from_rgb(150, 150, 150),
         }
     }
 
     fn get_node_label(&self, node_data: &NodeData, lod: LODLevel) -> String {
         match lod {
-            LODLevel::Minimal => node_data.ip.to_string(),
-            LODLevel::Low => {
-                if let Some(hostname) = &node_data.hostname {
-                    hostname.clone()
-                } else {
-                    node_data.ip.to_string()
-                }
-            }
-            LODLevel::Medium => {
-                let label = if let Some(hostname) = &node_data.hostname {
-                    format!("{}\n{}", hostname, node_data.ip)
-                } else {
-                    node_data.ip.to_string()
-                };
-                label
-            }
-            LODLevel::High | LODLevel::Full => {
-                let mut label = String::new();
-                if let Some(hostname) = &node_data.hostname {
-                    label.push_str(hostname);
-                }
-                label.push_str(&format!("\n{}", node_data.ip));
-                if let Some(vendor) = &node_data.vendor {
-                    label.push_str(&format!("\n{}", vendor));
-                }
-                label
-            }
+            LODLevel::Minimal | LODLevel::Low => String::new(),
+            LODLevel::Medium => node_data.ip.to_string(),
+            _ => node_data.hostname.as_ref().cloned().unwrap_or_else(|| node_data.ip.to_string()),
         }
-    }
-
-    pub fn get_selected_node_data(&self) -> Option<&NodeData> {
-        for node_idx in self.graph.graph.node_indices() {
-            let node_data = match self.graph.graph.node_weight(node_idx) {
-                Some(n) => n,
-                None => continue,
-            };
-
-            if node_data.ip.is_loopback() {
-                continue;
-            }
-        }
-        None
-    }
-
-    pub fn node_count(&self) -> usize {
-        self.graph.graph.node_count()
-    }
-
-    pub fn edge_count(&self) -> usize {
-        self.graph.graph.edge_count()
-    }
-
-    pub fn is_layout_computing(&self) -> bool {
-        self.is_layout_computing
     }
 }
