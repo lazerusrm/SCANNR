@@ -10,29 +10,29 @@
 
 </div>
 
-# 🤔 What is SCANNR?
+# What is SCANNR?
 
 **SCANNR** is a high-performance, modern GUI and enhanced CLI suite built on top of the legendary [RustScan](https://github.com/RustScan/RustScan) engine. While maintaining the incredible speed of the original project, SCANNR adds a powerful graphical interface, real-time network visualization, and advanced discovery logic.
 
 **Note:** SCANNR is an independent GUI project based on RustScan. We are deep admirers of the original work by the RustScan team and aim to provide a visual-first experience for their world-class scanning engine.
 
-# ✨ Key Features
+# Key Features
 
-- 🚀 **Extreme Speed:** Scans thousands of ports in seconds using the optimized RustScan engine.
-- 🎨 **Modern GUI:** A clean, responsive interface with light/dark theme support.
-- 🌊 **Cascade Scanning:**
+- **Extreme Speed:** Scans thousands of ports in seconds using the optimized RustScan engine.
+- **Modern GUI:** A clean, responsive interface with light/dark theme support.
+- **Cascade Scanning:**
     - **Phase 0:** Instant local neighbor discovery via ARP cache.
     - **Phase 0.5:** High-speed Active TCP Probe to force discovery of non-cached hosts.
     - **Phase 1:** Quick probing of common services.
     - **Phase 2:** Full deep-scan of all requested ports.
-- 📊 **Real-time Progress:** A granular, multi-phase progress bar that shows exactly what the scanner is doing in the background.
-- 🌐 **Network Topology:** Interactive visualization of your network structure, including router/server identification and traceroute mapping.
-- 🏷️ **Vendor Identification:** Automatic MAC OUI lookup to identify device manufacturers (Apple, Cisco, Raspberry Pi, etc.).
-- 🛠️ **Binary Suite:**
+- **Real-time Progress:** A granular, multi-phase progress bar that shows exactly what the scanner is doing in the background.
+- **Network Topology:** Interactive visualization of your network structure, including router/server identification and traceroute mapping.
+- **Vendor Identification:** Automatic MAC OUI lookup to identify device manufacturers (Apple, Cisco, Raspberry Pi, etc.).
+- **Binary Suite:**
     - `scannr-gui`: The full graphical experience.
     - `scannr-cli`: The enhanced command-line version.
 
-# 🚀 Installation
+# Installation
 
 ### Windows
 1. Download the latest `scannr-gui.exe` or `scannr-cli.exe` from our [releases page](https://github.com/lazerusrm/SCANNR/releases).
@@ -47,7 +47,7 @@ cargo build --release
 ```
 Binaries will be available in `target/release/`.
 
-# 🤸 Usage
+# Usage
 
 ### GUI Version
 Launch `scannr-gui.exe`. Enter your target CIDR (e.g., `192.168.1.0/24`) and hit **Scan Network**. Results will appear in real-time as they are discovered.
@@ -57,7 +57,7 @@ Launch `scannr-gui.exe`. Enter your target CIDR (e.g., `192.168.1.0/24`) and hit
 ./scannr-cli -a 192.168.1.1/24 -t 500 -b 3000
 ```
 
-# ⚖️ License & Attribution
+# License & Attribution
 
 SCANNR is licensed under the **GNU GPL-3.0**.
 
@@ -67,5 +67,5 @@ The original RustScan code remains the property of its respective owners and is 
 
 ---
 <div align="center">
-  Built with ❤️ for the security community.
+  Built with passion for the security community.
 </div>
