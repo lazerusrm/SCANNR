@@ -1,3 +1,16 @@
+SCANNR - Modern GUI for RustScan
+Copyright (C) 2026 lazerusrm and contributors.
+
+Based on RustScan (https://github.com/RustScan/RustScan).
+Original RustScan code remains the property of its respective owners.
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+-------------------------------------------------------------------------------
+
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 

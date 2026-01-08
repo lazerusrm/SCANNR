@@ -1,4 +1,5 @@
 //! This crate exposes the internal functionality of the
+//! [SCANNR](https://github.com/lazerusrm/SCANNR) suite, based on the
 //! [RustScan](https://rustscan.github.io/RustScan) port scanner.
 //!
 //! ## Example: perform a scan against localhost
@@ -11,9 +12,9 @@
 //! use async_std::task::block_on;
 //! use std::{net::IpAddr, time::Duration};
 //!
-//! use rustscan::input::{PortRange, ScanOrder};
-//! use rustscan::port_strategy::PortStrategy;
-//! use rustscan::scanner::Scanner;
+//! use SCANNR::input::{PortRange, ScanOrder};
+//! use SCANNR::port_strategy::PortStrategy;
+//! use SCANNR::scanner::Scanner;
 //!
 //! fn main() {
 //!     let addrs = vec!["127.0.0.1".parse::<IpAddr>().unwrap()];
@@ -21,20 +22,20 @@
 //!         start: 1,
 //!         end: 1_000,
 //!     };
-//!     let strategy = PortStrategy::pick(&Some(range), None, ScanOrder::Random); // can be serial, random or manual https://github.com/RustScan/RustScan/blob/master/src/port_strategy/mod.rs
+//!     let strategy = PortStrategy::pick(&Some(range), None, ScanOrder::Random);
 //!     let scanner = Scanner::new(
-//!         &addrs, // the addresses to scan
-//!         10, // batch_size is how many ports at a time should be scanned
-//!         Duration::from_millis(100), //T imeout is the time RustScan should wait before declaring a port closed. As datatype Duration.
-//!         1, // Tries, how many retries should RustScan do?
-//!         true, // greppable is whether or not RustScan should print things, or wait until the end to print only the ip
-//!         strategy, // the port strategy used
-//!         true, // accessible, should the output be A11Y compliant?
-//!         vec![9000], // What ports should RustScan exclude?
-//!         false, // is this a UDP scan?
+//!         &addrs,
+//!         10,
+//!         Duration::from_millis(100),
+//!         1,
+//!         true,
+//!         strategy,
+//!         true,
+//!         vec![9000],
+//!         false,
 //!     );
 //!
-//!     let scan_result = block_on(scanner.run());
+//!     let scan_result = block_on(scanner.run(None, None));
 //!
 //!     println!("{:?}", scan_result);
 //! }
