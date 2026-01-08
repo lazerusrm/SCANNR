@@ -73,7 +73,6 @@ pub struct Hop {
     pub is_timeout: bool,
 }
 
-#[cfg(target_os = "windows")]
 const COMMON_PORTS: [u16; 20] = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 1723, 3306, 3389, 5432, 5900, 8080, 8443, 27017];
 
 pub async fn get_arp_entries() -> Vec<ArpEntry> {
