@@ -1,6 +1,6 @@
 [package]
 name = "SCANNR"
-version = "1.0.2"
+version = "1.0.3"
 authors = ["Autumn <autumn@skerritt.blog>"]
 edition = "2021"
 description = "Faster Nmap Scanning with Rust"
