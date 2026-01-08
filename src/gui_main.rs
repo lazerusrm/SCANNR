@@ -1,15 +1,12 @@
 //! GUI entry point for SCANNR
+
+// Configure Windows to not show console
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
-use rustscan::gui::RustScanApp;
+use SCANNR::gui::ScannrApp;
 
 fn main() -> eframe::Result<()> {
-    env_logger::init();
-
-    // Initialize tokio runtime for async operations
-    let rt = tokio::runtime::Runtime::new().unwrap();
-    let _guard = rt.enter();
-
+    // Configure eframe options
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1200.0, 800.0])
@@ -20,9 +17,10 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
 
+    // Note: ScannrApp creates its own tokio runtime internally
     eframe::run_native(
         "SCANNR",
         options,
-        Box::new(|cc| Box::new(RustScanApp::new(cc))),
+        Box::new(|cc| Box::new(ScannrApp::new(cc))),
     )
 }

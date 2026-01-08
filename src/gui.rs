@@ -9,7 +9,7 @@ use ipnetwork::IpNetwork;
 use serde::Serialize;
 use std::collections::{HashMap, HashSet};
 use std::net::IpAddr;
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::AtomicBool;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -261,25 +261,6 @@ const STANDARD_PORTS: [u16; 49] = [
     5555, 5080, 5300, 5200, 10000,
 ];
 
-fn get_optimal_batch_size() -> u16 {
-    #[cfg(target_os = "windows")]
-    return 3000;
-
-    #[cfg(target_family = "unix")]
-    {
-        use std::process::Command;
-        if let Ok(output) = Command::new("sh").arg("-c").arg("ulimit -n").output() {
-            if let Ok(limit) = String::from_utf8_lossy(&output.stdout)
-                .trim()
-                .parse::<u16>()
-            {
-                return std::cmp::min(limit.saturating_sub(100), 10000);
-            }
-        }
-        3000
-    }
-}
-
 fn detect_device_type(ports: &[u16]) -> String {
     let ports_set: HashSet<u16> = ports.iter().copied().collect();
 
@@ -368,11 +349,11 @@ impl ScannrApp {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .enable_all()
             .build()
-            .unwrap();
+            .expect("Failed to create tokio runtime");
 
         let state = Arc::new(Mutex::new(AppState::default()));
         let state_clone = state.clone();
-        let _ctx = cc.egui_ctx.clone();
+        let ctx = cc.egui_ctx.clone();
 
         runtime.spawn(async move {
             let interfaces = enumerate_network_interfaces().await;
@@ -382,11 +363,18 @@ impl ScannrApp {
 
             if !state.available_interfaces.is_empty() {
                 let primary = state.available_interfaces.first().unwrap();
-                state.subnet_input = primary.subnet.clone();
+                // Extract network address for subnet input (e.g., "192.168.1.0/24")
+                if let Some(pos) = primary.subnet.find(' ') {
+                    // Format is "192.168.1.0 (eth0)" - extract just the IP/CIDR part
+                    state.subnet_input = format!("{}/24", primary.subnet[..pos].to_string());
+                } else {
+                    state.subnet_input = format!("{}/24", primary.subnet);
+                }
                 state.selected_interface_idx = 0;
             }
 
             drop(state);
+            ctx.request_repaint();
         });
 
         Self { state, runtime }
@@ -561,30 +549,33 @@ impl eframe::App for ScannrApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         let mut state = self.state.lock().unwrap();
 
+        // Apply theme
         match state.theme_mode {
-            ThemeMode::Light => {
-                ctx.set_visuals(Visuals::light());
-            }
-            ThemeMode::Dark => {
-                ctx.set_visuals(Visuals::dark());
-            }
-            ThemeMode::Auto => {
-                ctx.set_visuals(Visuals::dark());
-            }
+            ThemeMode::Light => ctx.set_visuals(Visuals::light()),
+            ThemeMode::Dark => ctx.set_visuals(Visuals::dark()),
+            ThemeMode::Auto => ctx.set_visuals(Visuals::dark()),
         }
 
-        if state.is_scanning {
+        // Request repaint during active operations
+        if state.is_scanning || state.is_discovering_topology {
             ctx.request_repaint();
         }
 
-        if state.is_discovering_topology && !state.is_scanning {
+        // Handle topology discovery trigger
+        let should_start_topology =
+            state.start_topology_discovery && !state.is_discovering_topology;
+        if should_start_topology {
+            state.start_topology_discovery = false;
+            state.is_discovering_topology = true;
+            state.topology_discovery_status = "Starting discovery...".to_string();
+
             let subnet = state.subnet_input.clone();
             let cancel_flag = Arc::new(AtomicBool::new(false));
             let state_clone = self.state.clone();
             let ctx_clone = ctx.clone();
 
             self.runtime.spawn(async move {
-                let cancel = cancel_flag.clone();
+                let cancel = cancel_flag;
 
                 let graph =
                     crate::topology::graph::discover_and_build_fast(&subnet, 128, 150, cancel)
@@ -599,19 +590,22 @@ impl eframe::App for ScannrApp {
 
                 ctx_clone.request_repaint();
             });
-
-            state.is_discovering_topology = false;
         }
 
+        // Clone values needed for async operations before dropping the lock
+        let ssh_dialog_show = state.ssh_dialog.show;
+        let export_feedback_show = state.export_feedback.show;
+
+        // Top panel - header bar
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+            ui.add_space(8.0);
             ui.horizontal(|ui| {
-                ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                    ui.heading(RichText::new("SCANNR").size(24.0).strong());
-                    ui.add_space(20.0);
-                    ui.label(RichText::new("The Modern Port Scanner").size(14.0).weak());
-                });
+                ui.heading(RichText::new("SCANNR").size(24.0).strong());
+                ui.add_space(20.0);
+                ui.label(RichText::new("The Modern Port Scanner").size(14.0).weak());
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    // Theme selector (right-to-left so Light appears last/rightmost)
                     ui.selectable_value(&mut state.theme_mode, ThemeMode::Light, "Light");
                     ui.selectable_value(&mut state.theme_mode, ThemeMode::Dark, "Dark");
                     ui.selectable_value(&mut state.theme_mode, ThemeMode::Auto, "Auto");
@@ -620,253 +614,361 @@ impl eframe::App for ScannrApp {
                     ui.separator();
                     ui.add_space(15.0);
 
+                    // View mode selector
                     ui.selectable_value(&mut state.view_mode, ViewMode::Topology, "Topology");
                     ui.selectable_value(&mut state.view_mode, ViewMode::List, "List");
                 });
             });
+            ui.add_space(8.0);
+        });
 
-            if state.export_feedback.show {
-                let feedback = state.export_feedback.clone();
-                let is_error = feedback.is_error;
+        // Central panel - main content
+        egui::CentralPanel::default().show(ctx, |ui| {
+            ui.add_space(10.0);
 
-                egui::Window::new("Export Result")
-                    .collapsible(false)
-                    .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                    .show(ctx, |ui| {
-                        ui.heading(
-                            RichText::new(if is_error {
-                                "Export Failed"
-                            } else {
-                                "Export Successful"
-                            })
-                            .size(18.0)
-                            .color(if is_error {
-                                Color32::from_rgb(255, 100, 100)
-                            } else {
-                                Color32::from_rgb(100, 255, 100)
-                            }),
-                        );
+            // Network selection row
+            ui.horizontal(|ui| {
+                ui.label("Network:");
 
-                        ui.add_space(10.0);
-                        ui.label(feedback.message);
+                // Network interface dropdown
+                let current_selection = if state.available_interfaces.is_empty() {
+                    "Detecting...".to_string()
+                } else if state.selected_interface_idx < state.available_interfaces.len() {
+                    state.available_interfaces[state.selected_interface_idx]
+                        .name
+                        .clone()
+                } else {
+                    "Select Network".to_string()
+                };
 
-                        ui.add_space(15.0);
+                // Clone interfaces for iteration to avoid borrow issues
+                let interfaces: Vec<_> = state
+                    .available_interfaces
+                    .iter()
+                    .enumerate()
+                    .map(|(idx, iface)| (idx, iface.name.clone(), iface.subnet.clone()))
+                    .collect();
 
-                        ui.horizontal(|ui| {
-                            ui.add_space(ui.available_width() - 80.0);
-                            if ui.button("OK").clicked() {
-                                state.export_feedback.show = false;
+                let mut new_selection: Option<(usize, String)> = None;
+
+                egui::ComboBox::from_id_source("network_interface")
+                    .width(250.0)
+                    .selected_text(&current_selection)
+                    .show_ui(ui, |ui| {
+                        for (idx, name, subnet) in &interfaces {
+                            let selected = state.selected_interface_idx == *idx;
+                            if ui.selectable_label(selected, name).clicked() {
+                                new_selection = Some((*idx, subnet.clone()));
                             }
-                        });
+                        }
                     });
-            }
 
-            egui::CentralPanel::default().show(ctx, |ui| {
+                // Apply selection change after iteration
+                if let Some((idx, subnet)) = new_selection {
+                    state.selected_interface_idx = idx;
+                    if let Some(pos) = subnet.find(' ') {
+                        state.subnet_input = format!("{}/24", &subnet[..pos]);
+                    } else {
+                        state.subnet_input = format!("{}/24", &subnet);
+                    }
+                }
+
                 ui.add_space(10.0);
 
-                ui.horizontal(|ui| {
-                    ui.label("Network:");
-                    ui.text_edit_singleline(&mut state.subnet_input);
+                // Manual input override
+                ui.label("or CIDR:");
+                ui.add(egui::TextEdit::singleline(&mut state.subnet_input).desired_width(150.0));
 
-                    ui.add_space(10.0);
+                ui.add_space(10.0);
 
-                    egui::ComboBox::from_id_source("scan_mode")
-                        .selected_text(state.scan_mode.label())
-                        .show_ui(ui, |ui| {
-                            ui.selectable_value(&mut state.scan_mode, ScanMode::Quick, "Quick");
-                            ui.selectable_value(
-                                &mut state.scan_mode,
-                                ScanMode::Standard,
-                                "Standard",
-                            );
-                            ui.selectable_value(&mut state.scan_mode, ScanMode::Full, "Full");
-                        });
+                egui::ComboBox::from_id_source("scan_mode")
+                    .selected_text(state.scan_mode.label())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut state.scan_mode,
+                            ScanMode::Quick,
+                            ScanMode::Quick.label(),
+                        );
+                        ui.selectable_value(
+                            &mut state.scan_mode,
+                            ScanMode::Standard,
+                            ScanMode::Standard.label(),
+                        );
+                        ui.selectable_value(
+                            &mut state.scan_mode,
+                            ScanMode::Full,
+                            ScanMode::Full.label(),
+                        );
+                    });
 
-                    ui.add_space(10.0);
+                ui.add_space(10.0);
 
-                    if !state.is_scanning {
-                        if ui.button("Scan Network").clicked() {
-                            if !state.subnet_input.is_empty() {
-                                state.is_scanning = true;
-                                state.scan_status = "Initializing scan...".to_string();
-                                state.scan_progress = 0.0;
-
-                                let subnet = state.subnet_input.clone();
-                                let scan_mode = state.scan_mode;
-                                let state_clone = self.state.clone();
-                                let ctx_clone = ctx.clone();
-
-                                self.runtime.spawn(async move {
-                                    run_scan(&subnet, state_clone, ctx_clone, scan_mode).await;
-                                });
-                            }
-                        }
+                if ui
+                    .small_button(if state.advanced_settings_open {
+                        "▼ Advanced"
                     } else {
-                        if ui.button("Cancel").clicked() {
-                            state.is_scanning = false;
-                            state.scan_status = "Scan cancelled".to_string();
-                        }
+                        "▶ Advanced"
+                    })
+                    .clicked()
+                {
+                    state.advanced_settings_open = !state.advanced_settings_open;
+                }
+            });
+
+            ui.add_space(10.0);
+
+            // Large scan button row
+            ui.horizontal(|ui| {
+                let button_text = if state.is_scanning {
+                    "Cancel Scan"
+                } else {
+                    "Scan Network"
+                };
+                let button_color = if state.is_scanning {
+                    Color32::from_rgb(200, 80, 80)
+                } else {
+                    Color32::from_rgb(50, 120, 200)
+                };
+
+                let button = egui::Button::new(
+                    RichText::new(button_text)
+                        .size(18.0)
+                        .strong()
+                        .color(Color32::WHITE),
+                )
+                .fill(button_color)
+                .min_size(egui::vec2(200.0, 40.0));
+
+                let enabled = !state.subnet_input.is_empty() || state.is_scanning;
+
+                if ui.add_enabled(enabled, button).clicked() {
+                    if state.is_scanning {
+                        state.is_scanning = false;
+                        state.scan_status = "Scan cancelled".to_string();
+                    } else {
+                        state.is_scanning = true;
+                        state.scan_status = "Initializing scan...".to_string();
+                        state.scan_progress = 0.0;
+                        state.results.clear();
+
+                        let subnet = state.subnet_input.clone();
+                        let scan_mode = state.scan_mode;
+                        let state_clone = self.state.clone();
+                        let ctx_clone = ctx.clone();
+
+                        self.runtime.spawn(async move {
+                            run_scan(&subnet, state_clone, ctx_clone, scan_mode).await;
+                        });
                     }
+                }
 
-                    if ui.button("Advanced").clicked() {
-                        state.advanced_settings_open = !state.advanced_settings_open;
-                    }
-                });
+                ui.add_space(20.0);
 
-                if state.advanced_settings_open {
-                    ui.add_space(10.0);
-                    ui.separator();
-                    ui.add_space(10.0);
+                // Show scan info
+                if !state.is_scanning && !state.results.is_empty() {
+                    ui.label(format!(
+                        "Last scan: {} hosts, {} open ports",
+                        state.results.len(),
+                        state.scanned_ports
+                    ));
+                }
+            });
 
+            // Advanced settings panel
+            if state.advanced_settings_open {
+                ui.add_space(10.0);
+                ui.group(|ui| {
                     ui.horizontal(|ui| {
                         ui.label("Batch Size:");
-                        ui.add(egui::Slider::new(&mut state.batch_size, 100..=10000));
+                        ui.add(
+                            egui::Slider::new(&mut state.batch_size, 100..=10000).logarithmic(true),
+                        );
 
                         ui.add_space(20.0);
 
                         ui.label("Timeout (ms):");
-                        ui.add(egui::Slider::new(&mut state.timeout_ms, 10..=5000));
+                        ui.add(
+                            egui::Slider::new(&mut state.timeout_ms, 10..=5000).logarithmic(true),
+                        );
 
                         ui.add_space(20.0);
 
                         ui.checkbox(&mut state.udp_scan, "UDP Scan");
                     });
-                }
+                });
+            }
 
+            ui.add_space(10.0);
+            ui.separator();
+            ui.add_space(10.0);
+
+            // Scan progress/status
+            if state.is_scanning {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(&state.scan_status);
+                });
+                ui.add_space(5.0);
+                ui.add(egui::ProgressBar::new(state.scan_progress).show_percentage());
                 ui.add_space(10.0);
+            } else if !state.scan_status.is_empty() {
+                ui.label(&state.scan_status);
+                ui.add_space(10.0);
+            }
+
+            // Results view
+            if !state.results.is_empty() || state.view_mode == ViewMode::Topology {
                 ui.separator();
                 ui.add_space(10.0);
 
-                if state.is_scanning {
-                    ui.horizontal(|ui| {
-                        ui.spinner();
-                        ui.label(&state.scan_status);
-                        ui.add_space(10.0);
-                        ui.label(format!("{:.0}%", state.scan_progress * 100.0));
-                    });
-                    ui.add(egui::ProgressBar::new(state.scan_progress).show_percentage());
-                    ui.add_space(10.0);
-                } else if !state.scan_status.is_empty() {
-                    ui.label(&state.scan_status);
-                    ui.add_space(10.0);
-                }
-
-                if !state.results.is_empty() {
-                    ui.separator();
-                    ui.add_space(10.0);
-
-                    match state.view_mode {
-                        ViewMode::List => draw_list_view(ui, &mut *state),
-                        ViewMode::Topology => draw_topology_view(ui, &mut *state),
+                match state.view_mode {
+                    ViewMode::List => draw_list_view(ui, &mut state),
+                    ViewMode::Topology => {
+                        draw_topology_view(ui, &mut state, &self.state, &self.runtime)
                     }
                 }
-            });
+            }
+        });
 
-            if state.ssh_dialog.show {
-                egui::Window::new("SSH Connection")
-                    .collapsible(false)
-                    .resizable(false)
-                    .show(ctx, |ui| {
-                        if let Some(ip) = state.ssh_dialog.ip {
-                            ui.label(format!("Connecting to: {}:{}", ip, state.ssh_dialog.port));
-                        }
-                        ui.add_space(10.0);
+        // Export feedback modal (outside panels)
+        if export_feedback_show {
+            let feedback = state.export_feedback.clone();
+            egui::Window::new("Export Result")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    let is_error = feedback.is_error;
+                    ui.heading(
+                        RichText::new(if is_error {
+                            "Export Failed"
+                        } else {
+                            "Export Successful"
+                        })
+                        .size(18.0)
+                        .color(if is_error {
+                            Color32::from_rgb(255, 100, 100)
+                        } else {
+                            Color32::from_rgb(100, 255, 100)
+                        }),
+                    );
 
-                        ui.horizontal(|ui| {
+                    ui.add_space(10.0);
+                    ui.label(&feedback.message);
+                    ui.add_space(15.0);
+
+                    if ui.button("OK").clicked() {
+                        state.export_feedback.show = false;
+                    }
+                });
+        }
+
+        // SSH dialog modal (outside panels)
+        if ssh_dialog_show {
+            egui::Window::new("SSH Connection")
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
+                .show(ctx, |ui| {
+                    if let Some(ip) = state.ssh_dialog.ip {
+                        ui.label(format!("Connecting to: {}:{}", ip, state.ssh_dialog.port));
+                    }
+                    ui.add_space(10.0);
+
+                    egui::Grid::new("ssh_form")
+                        .num_columns(2)
+                        .spacing([10.0, 8.0])
+                        .show(ui, |ui| {
                             ui.label("Username:");
-                            ui.text_edit_singleline(&mut state.ssh_dialog.username);
-                        });
+                            ui.add(
+                                egui::TextEdit::singleline(&mut state.ssh_dialog.username)
+                                    .desired_width(200.0),
+                            );
+                            ui.end_row();
 
-                        ui.add_space(5.0);
-
-                        ui.horizontal(|ui| {
                             ui.label("Password:");
                             ui.add(
                                 egui::TextEdit::singleline(&mut state.ssh_dialog.password)
-                                    .password(true),
+                                    .password(true)
+                                    .desired_width(200.0),
                             );
+                            ui.end_row();
                         });
 
-                        ui.add_space(10.0);
+                    ui.add_space(10.0);
 
-                        if state.ssh_dialog.connecting {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label("Connecting...");
-                            });
-                        } else {
-                            ui.horizontal(|ui| {
-                                if ui.button("Connect").clicked() {
-                                    if !state.ssh_dialog.username.is_empty()
-                                        && !state.ssh_dialog.password.is_empty()
-                                    {
-                                        let ip = state.ssh_dialog.ip;
-                                        let port = state.ssh_dialog.port;
-                                        let username = state.ssh_dialog.username.clone();
-                                        let password = state.ssh_dialog.password.clone();
-                                        let state_clone = self.state.clone();
+                    if state.ssh_dialog.connecting {
+                        ui.horizontal(|ui| {
+                            ui.spinner();
+                            ui.label("Connecting...");
+                        });
+                    } else {
+                        ui.horizontal(|ui| {
+                            if ui.button("Connect").clicked()
+                                && !state.ssh_dialog.username.is_empty()
+                                && !state.ssh_dialog.password.is_empty()
+                            {
+                                let ip = state.ssh_dialog.ip;
+                                let port = state.ssh_dialog.port;
+                                let username = state.ssh_dialog.username.clone();
+                                let password = state.ssh_dialog.password.clone();
+                                let state_clone = self.state.clone();
+                                let ctx_clone = ctx.clone();
 
-                                        state.ssh_dialog.connecting = true;
-                                        let ctx_clone = ctx.clone();
+                                state.ssh_dialog.connecting = true;
 
-                                        self.runtime.spawn(async move {
-                                            let result = attempt_ssh_connection(
-                                                ip.unwrap(),
-                                                port,
-                                                &username,
-                                                &password,
-                                            )
-                                            .await;
+                                self.runtime.spawn(async move {
+                                    let result = attempt_ssh_connection(
+                                        ip.unwrap(),
+                                        port,
+                                        &username,
+                                        &password,
+                                    )
+                                    .await;
 
-                                            let mut state = state_clone.lock().unwrap();
-                                            state.ssh_dialog.connecting = false;
-                                            match result {
-                                                Ok(output) => {
-                                                    state.ssh_dialog.output = output;
-                                                    state.ssh_dialog.error = None;
-                                                }
-                                                Err(err) => {
-                                                    state.ssh_dialog.error = Some(err);
-                                                }
-                                            }
-                                            ctx_clone.request_repaint();
-                                        });
+                                    let mut state = state_clone.lock().unwrap();
+                                    state.ssh_dialog.connecting = false;
+                                    match result {
+                                        Ok(output) => {
+                                            state.ssh_dialog.output = output;
+                                            state.ssh_dialog.error = None;
+                                        }
+                                        Err(err) => {
+                                            state.ssh_dialog.error = Some(err);
+                                        }
                                     }
-                                }
-
-                                ui.add_space(10.0);
-
-                                if ui.button("Cancel").clicked() {
-                                    state.ssh_dialog.show = false;
-                                    state.ssh_dialog = SshDialogState::default();
-                                }
-                            });
-                        }
-
-                        if let Some(ref error) = state.ssh_dialog.error {
-                            ui.add_space(10.0);
-                            ui.colored_label(
-                                Color32::from_rgb(255, 100, 100),
-                                format!("Error: {}", error),
-                            );
-                        }
-
-                        if !state.ssh_dialog.output.is_empty() {
-                            ui.add_space(10.0);
-                            ui.separator();
-                            ui.add_space(10.0);
-                            ui.label("Command Output:");
-                            egui::ScrollArea::vertical()
-                                .max_height(200.0)
-                                .show(ui, |ui| {
-                                    for line in &state.ssh_dialog.output {
-                                        ui.monospace(line);
-                                    }
+                                    ctx_clone.request_repaint();
                                 });
-                        }
-                    });
-            }
-        });
+                            }
+
+                            if ui.button("Cancel").clicked() {
+                                state.ssh_dialog = SshDialogState::default();
+                            }
+                        });
+                    }
+
+                    if let Some(ref error) = state.ssh_dialog.error {
+                        ui.add_space(10.0);
+                        ui.colored_label(
+                            Color32::from_rgb(255, 100, 100),
+                            format!("Error: {}", error),
+                        );
+                    }
+
+                    if !state.ssh_dialog.output.is_empty() {
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.label("Command Output:");
+                        egui::ScrollArea::vertical()
+                            .max_height(200.0)
+                            .show(ui, |ui| {
+                                for line in &state.ssh_dialog.output {
+                                    ui.monospace(line);
+                                }
+                            });
+                    }
+                });
+        }
     }
 }
 
@@ -924,9 +1026,11 @@ async fn run_scan(
             return;
         }
 
-        println!(
+        log::info!(
             "Starting scan: {} IPs x {} ports = {} total operations",
-            total_ips, total_ports, total_ops
+            total_ips,
+            total_ports,
+            total_ops
         );
 
         {
@@ -958,12 +1062,14 @@ async fn run_scan(
 
         let port_strategy = PortStrategy::pick(&Some(port_range), None, ScanOrder::Serial);
 
-        let mut scanned_ports = 0;
-
+        // Update status - preparing scan
         {
             let mut guard = state.lock().unwrap();
-            guard.scan_status = "Scanning network...".to_string();
-            guard.scan_progress = 0.5;
+            guard.scan_status = format!(
+                "Preparing to scan {} hosts on {} ports...",
+                total_ips, total_ports
+            );
+            guard.scan_progress = 0.0;
         }
         ctx.request_repaint();
 
@@ -979,8 +1085,31 @@ async fn run_scan(
             udp_scan,
         );
 
-        let open_sockets = scanner.run().await;
-        println!("Scanner found {} open sockets", open_sockets.len());
+        // Update status - scanning
+        {
+            let mut guard = state.lock().unwrap();
+            guard.scan_status = format!("Scanning {} hosts...", total_ips);
+        }
+        ctx.request_repaint();
+
+        // Create progress callback
+        let state_clone = state.clone();
+        let ctx_clone = ctx.clone();
+        let on_progress = std::sync::Arc::new(move |progress: f32| {
+            if let Ok(mut guard) = state_clone.lock() {
+                guard.scan_progress = progress;
+            }
+            ctx_clone.request_repaint();
+        });
+
+        let open_sockets = scanner.run(Some(on_progress)).await;
+
+        // Update status - processing results
+        {
+            let mut guard = state.lock().unwrap();
+            guard.scan_status = "Processing results...".to_string();
+        }
+        ctx.request_repaint();
 
         let mut host_map: HashMap<IpAddr, Vec<u16>> = HashMap::new();
 
@@ -993,6 +1122,7 @@ async fn run_scan(
 
         // Process results and update UI
         let mut results = Vec::new();
+        let mut scanned_ports = 0usize;
         for (ip, ports) in host_map {
             let ports_len = ports.len();
             scanned_ports += ports_len;
@@ -1007,7 +1137,6 @@ async fn run_scan(
                 service_names: HashMap::new(),
             };
             results.push(host);
-            println!("Host found: {} - {} ({} ports)", ip, detected_os, ports_len);
         }
 
         ctx.request_repaint();
@@ -1117,201 +1246,283 @@ fn draw_list_view(ui: &mut egui::Ui, state: &mut AppState) {
 
         if state.results.is_empty() {
             ui.centered_and_justified(|ui| {
-                ui.add_space(20.0);
                 ui.label("No scan results yet. Click 'Scan Network' to start.");
             });
-        } else {
-            ui.add_space(10.0);
+            return;
+        }
 
-            ui.horizontal(|ui| {
-                ui.label("Sort by:");
-                egui::ComboBox::from_id_source("sort_combo")
-                    .selected_text(state.sort_by.label())
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut state.sort_by,
-                            SortOption::IpAddress,
-                            "IP Address",
-                        );
-                        ui.selectable_value(
-                            &mut state.sort_by,
-                            SortOption::PortCount,
-                            "Port Count",
-                        );
-                        ui.selectable_value(&mut state.sort_by, SortOption::Vendor, "Vendor");
-                        ui.selectable_value(&mut state.sort_by, SortOption::Hostname, "Hostname");
-                    });
+        // Controls row
+        ui.horizontal(|ui| {
+            ui.label("Sort by:");
+            egui::ComboBox::from_id_source("sort_combo")
+                .selected_text(state.sort_by.label())
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut state.sort_by, SortOption::IpAddress, "IP Address");
+                    ui.selectable_value(&mut state.sort_by, SortOption::PortCount, "Port Count");
+                    ui.selectable_value(&mut state.sort_by, SortOption::Vendor, "Vendor");
+                    ui.selectable_value(&mut state.sort_by, SortOption::Hostname, "Hostname");
+                });
 
-                ui.add_space(20.0);
+            if ui
+                .button(if state.sort_ascending { "▲" } else { "▼" })
+                .clicked()
+            {
+                state.sort_ascending = !state.sort_ascending;
+            }
 
-                if ui.button("Export CSV").clicked() {
-                    export_results_csv(state);
+            ui.add_space(20.0);
+
+            if ui.button("Export CSV").clicked() {
+                export_results_csv(state);
+            }
+
+            if ui.button("Export JSON").clicked() {
+                export_results_json(state);
+            }
+
+            if ui.button("Copy to Clipboard").clicked() {
+                copy_results_to_clipboard(state);
+            }
+        });
+
+        ui.add_space(10.0);
+
+        ui.horizontal(|ui| {
+            ui.label("Filter:");
+            ui.add(egui::TextEdit::singleline(&mut state.filter_text).desired_width(200.0));
+            if !state.filter_text.is_empty() && ui.button("Clear").clicked() {
+                state.filter_text.clear();
+            }
+        });
+
+        ui.add_space(10.0);
+
+        // Filter and sort results
+        let filter_lower = state.filter_text.to_lowercase();
+        let mut filtered_results: Vec<_> = state
+            .results
+            .iter()
+            .filter(|host| {
+                if state.filter_text.is_empty() {
+                    return true;
                 }
-
-                if ui.button("Export JSON").clicked() {
-                    export_results_json(state);
-                }
-
-                if ui.button("Copy to Clipboard").clicked() {
-                    copy_results_to_clipboard(state);
-                }
-            });
-
-            ui.add_space(10.0);
-
-            ui.horizontal(|ui| {
-                ui.label("Filter:");
-                ui.text_edit_singleline(&mut state.filter_text);
-            });
-
-            ui.add_space(10.0);
-
-            let mut filtered_results: Vec<_> = state.results.iter().collect();
-
-            filtered_results.retain(|host| {
-                let ip_match = host.ip.to_string().contains(&state.filter_text)
-                    || state.filter_text.is_empty();
-                let port_match = state
-                    .filter_by_port
-                    .map_or(true, |p| host.ports.contains(&p));
-
+                let ip_match = host.ip.to_string().contains(&filter_lower);
                 let hostname_match = host
                     .hostname
                     .as_ref()
-                    .map(|h| h.contains(&state.filter_text))
+                    .map(|h| h.to_lowercase().contains(&filter_lower))
                     .unwrap_or(false);
+                let os_match = host
+                    .os
+                    .as_ref()
+                    .map(|o| o.to_lowercase().contains(&filter_lower))
+                    .unwrap_or(false);
+                let port_match = state
+                    .filter_by_port
+                    .map_or(false, |p| host.ports.contains(&p));
 
-                ip_match || hostname_match || port_match
-            });
+                ip_match || hostname_match || os_match || port_match
+            })
+            .collect();
 
-            match state.sort_by {
-                SortOption::IpAddress => filtered_results.sort_by_key(|h| h.ip),
-                SortOption::PortCount => {
-                    filtered_results.sort_by_key(|h| std::cmp::Reverse(h.port_count()))
-                }
-                SortOption::Vendor => {
-                    filtered_results.sort_by_key(|h| h.vendor.clone().unwrap_or_default())
-                }
-                SortOption::Hostname => {
-                    filtered_results.sort_by_key(|h| h.hostname.clone().unwrap_or_default())
-                }
+        match state.sort_by {
+            SortOption::IpAddress => filtered_results.sort_by_key(|h| h.ip),
+            SortOption::PortCount => {
+                filtered_results.sort_by_key(|h| std::cmp::Reverse(h.port_count()))
             }
-
-            if !state.sort_ascending {
-                filtered_results.reverse();
+            SortOption::Vendor => {
+                filtered_results.sort_by_key(|h| h.vendor.clone().unwrap_or_default())
             }
+            SortOption::Hostname => {
+                filtered_results.sort_by_key(|h| h.hostname.clone().unwrap_or_default())
+            }
+        }
 
-            egui::ScrollArea::new([true, true]).show(ui, |ui| {
+        if !state.sort_ascending {
+            filtered_results.reverse();
+        }
+
+        ui.label(format!(
+            "Showing {} of {} hosts",
+            filtered_results.len(),
+            state.results.len()
+        ));
+        ui.add_space(5.0);
+
+        // Results list
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
                 for (idx, host) in filtered_results.iter().enumerate() {
-                    let _host_response = ui
-                        .group(|ui| {
-                            ui.horizontal(|ui| {
-                                let host_text = if let Some(hostname) = &host.hostname {
-                                    format!("{} ({})", hostname, host.ip)
-                                } else {
-                                    host.ip.to_string()
-                                };
+                    ui.group(|ui| {
+                        ui.horizontal(|ui| {
+                            let host_text = match &host.hostname {
+                                Some(hostname) => format!("{} ({})", hostname, host.ip),
+                                None => host.ip.to_string(),
+                            };
 
-                                ui.label(RichText::new(host_text).size(16.0).strong().color(
-                                    if state.selected_result == Some(idx) {
-                                        Color32::from_rgb(100, 200, 255)
-                                    } else {
-                                        ui.visuals().text_color()
-                                    },
-                                ));
+                            let is_selected = state.selected_result == Some(idx);
+                            let text_color = if is_selected {
+                                Color32::from_rgb(100, 200, 255)
+                            } else {
+                                ui.visuals().text_color()
+                            };
 
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if let Some(ref vendor) = host.vendor {
-                                            ui.label(RichText::new(vendor.clone()).small().weak());
-                                        }
+                            if ui
+                                .selectable_label(
+                                    is_selected,
+                                    RichText::new(&host_text)
+                                        .size(16.0)
+                                        .strong()
+                                        .color(text_color),
+                                )
+                                .clicked()
+                            {
+                                state.selected_result = Some(idx);
+                            }
 
+                            ui.with_layout(
+                                egui::Layout::right_to_left(egui::Align::Center),
+                                |ui| {
+                                    if let Some(ref os) = host.os {
+                                        ui.label(
+                                            RichText::new(os)
+                                                .small()
+                                                .color(Color32::from_rgb(100, 200, 100)),
+                                        );
+                                    }
+                                    if let Some(ref vendor) = host.vendor {
                                         ui.add_space(10.0);
-
-                                        if let Some(ref os) = host.os {
-                                            ui.label(
-                                                RichText::new(os.clone())
-                                                    .small()
-                                                    .color(Color32::from_rgb(100, 200, 100)),
-                                            );
-                                        }
-
+                                        ui.label(RichText::new(vendor).small().weak());
+                                    }
+                                    if let Some(ref mac) = host.mac {
                                         ui.add_space(10.0);
+                                        ui.label(RichText::new(mac).small().weak());
+                                    }
+                                },
+                            );
+                        });
 
-                                        if let Some(ref mac) = host.mac {
-                                            ui.label(RichText::new(mac.clone()).small().weak());
-                                        }
-                                    },
-                                );
-                            });
+                        ui.add_space(5.0);
 
-                            ui.add_space(8.0);
+                        // Port list with wrapping
+                        let ports_text = format!(
+                            "Ports: {}",
+                            host.ports
+                                .iter()
+                                .map(|p| p.to_string())
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        );
+                        ui.label(
+                            RichText::new(ports_text)
+                                .size(13.0)
+                                .color(Color32::from_rgb(100, 200, 100)),
+                        );
 
-                            ui.label(
-                                RichText::new(format!(
-                                    "Ports: {}",
-                                    host.ports
+                        ui.add_space(5.0);
+
+                        // Actions
+                        ui.horizontal(|ui| {
+                            ui.menu_button("Actions", |ui| {
+                                if ui.button("Open in Browser").clicked() {
+                                    ui.close_menu();
+                                    open_in_browser(&format!("http://{}", host.ip));
+                                }
+
+                                if host.ports.contains(&443) && ui.button("Open HTTPS").clicked() {
+                                    ui.close_menu();
+                                    open_in_browser(&format!("https://{}", host.ip));
+                                }
+
+                                if host.ports.contains(&22) && ui.button("SSH Connect").clicked() {
+                                    ui.close_menu();
+                                    state.ssh_dialog = SshDialogState {
+                                        show: true,
+                                        ip: Some(host.ip),
+                                        port: 22,
+                                        ..Default::default()
+                                    };
+                                }
+
+                                if ui.button("Copy IP").clicked() {
+                                    ui.close_menu();
+                                    ui.output_mut(|o| o.copied_text = host.ip.to_string());
+                                }
+
+                                if ui.button("Copy All Ports").clicked() {
+                                    ui.close_menu();
+                                    let ports_str = host
+                                        .ports
                                         .iter()
                                         .map(|p| p.to_string())
                                         .collect::<Vec<_>>()
-                                        .join(", ")
-                                ))
-                                .size(14.0)
-                                .color(Color32::from_rgb(100, 200, 100)),
-                            );
-
-                            ui.add_space(5.0);
-
-                            ui.horizontal(|ui| {
-                                ui.menu_button("Actions", |ui| {
-                                    if ui.button("Open in Browser").clicked() {
-                                        ui.close_menu();
-                                        let _ = std::process::Command::new("cmd")
-                                            .args(&["/C", "start", &format!("http://{}", host.ip)])
-                                            .creation_flags(CREATE_NO_WINDOW)
-                                            .output();
-                                    }
-
-                                    if host.ports.contains(&22) {
-                                        if ui.button("SSH Connect").clicked() {
-                                            ui.close_menu();
-                                            state.ssh_dialog = SshDialogState {
-                                                show: true,
-                                                ip: Some(host.ip),
-                                                port: 22,
-                                                username: String::new(),
-                                                password: String::new(),
-                                                connecting: false,
-                                                error: None,
-                                                output: Vec::new(),
-                                            };
-                                        }
-                                    }
-
-                                    if ui.button("Run Nmap").clicked() {
-                                        ui.close_menu();
-                                        let _ = std::process::Command::new("cmd")
-                                            .args(&["/C", "start", "nmap", &format!("{}", host.ip)])
-                                            .creation_flags(CREATE_NO_WINDOW)
-                                            .output();
-                                    }
-                                });
+                                        .join(",");
+                                    ui.output_mut(|o| o.copied_text = ports_str);
+                                }
                             });
 
-                            ui.add_space(5.0);
-                        })
-                        .response;
+                            // Quick action buttons
+                            if host.ports.contains(&80)
+                                || host.ports.contains(&443)
+                                || host.ports.contains(&8080)
+                            {
+                                if ui.small_button("🌐 Web").clicked() {
+                                    let port = if host.ports.contains(&443) {
+                                        443
+                                    } else if host.ports.contains(&8080) {
+                                        8080
+                                    } else {
+                                        80
+                                    };
+                                    let protocol = if port == 443 { "https" } else { "http" };
+                                    open_in_browser(&format!(
+                                        "{}://{}:{}",
+                                        protocol, host.ip, port
+                                    ));
+                                }
+                            }
+
+                            if host.ports.contains(&22) {
+                                if ui.small_button("🔑 SSH").clicked() {
+                                    state.ssh_dialog = SshDialogState {
+                                        show: true,
+                                        ip: Some(host.ip),
+                                        port: 22,
+                                        ..Default::default()
+                                    };
+                                }
+                            }
+                        });
+                    });
+                    ui.add_space(5.0);
                 }
             });
-        }
     });
+}
+
+/// Cross-platform function to open a URL in the default browser
+fn open_in_browser(url: &str) {
+    #[cfg(target_os = "windows")]
+    {
+        let _ = std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn();
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = std::process::Command::new("open").arg(url).spawn();
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("xdg-open").arg(url).spawn();
+    }
 }
 
 fn export_results_csv(state: &mut AppState) {
     use std::fs::File;
     use std::io::Write;
-    use std::path::PathBuf;
 
     let mut csv = String::new();
     csv.push_str("IP,Hostname,Vendor,MAC,OS,Ports\n");
@@ -1329,13 +1540,13 @@ fn export_results_csv(state: &mut AppState) {
             .join(";");
 
         csv.push_str(&format!(
-            "{},{},{},{},{}\n",
+            "{},{},{},{},{},{}\n",
             host.ip, hostname, vendor, mac, os, ports_str
         ));
     }
 
     let filename = format!(
-        "rustscan_export_{}.csv",
+        "scannr_export_{}.csv",
         chrono::Local::now().format("%Y%m%d_%H%M%S")
     );
     let file_path = std::path::PathBuf::from(&filename);
@@ -1370,12 +1581,11 @@ fn export_results_csv(state: &mut AppState) {
 fn export_results_json(state: &mut AppState) {
     use std::fs::File;
     use std::io::Write;
-    use std::path::PathBuf;
 
     let json = serde_json::to_string_pretty(&state.results).unwrap_or_default();
 
     let filename = format!(
-        "rustscan_export_{}.json",
+        "scannr_export_{}.json",
         chrono::Local::now().format("%Y%m%d_%H%M%S")
     );
     let file_path = std::path::PathBuf::from(&filename);
@@ -1422,187 +1632,222 @@ fn copy_results_to_clipboard(state: &mut AppState) {
             text.push_str(&format!("  OS: {}\n", os));
         }
         text.push_str(&format!(
-            "  Ports: {}\n",
+            "  Ports: {}\n\n",
             host.ports
                 .iter()
                 .map(|p| p.to_string())
                 .collect::<Vec<_>>()
                 .join(", ")
         ));
-        text.push_str("\n");
     }
 
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        let _ = Command::new("cmd")
-            .args(["/C", "echo", &text.trim(), "|", "clip"])
-            .creation_flags(CREATE_NO_WINDOW)
-            .output();
-    }
-
-    #[cfg(target_family = "unix")]
-    {
-        use std::process::Command;
-        let _ = Command::new("xclip")
-            .args(["-selection", "clipboard"])
-            .stdin(std::process::Stdio::piped())
-            .output();
-
-        let _ = Command::new("xsel")
-            .args(["--clipboard", "--input"])
-            .stdin(std::process::Stdio::piped())
-            .output();
-    }
+    let success = copy_to_system_clipboard(&text);
 
     state.export_feedback = ExportFeedback {
         show: true,
-        message: format!("Copied {} hosts to clipboard", state.results.len()),
-        is_error: false,
+        message: if success {
+            format!("Copied {} hosts to clipboard", state.results.len())
+        } else {
+            "Failed to copy to clipboard".to_string()
+        },
+        is_error: !success,
     };
-
-    println!("{}", text);
 }
 
-fn draw_topology_view(ui: &mut egui::Ui, state: &mut AppState) {
+/// Cross-platform clipboard copy
+fn copy_to_system_clipboard(text: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        if let Ok(mut child) = Command::new("clip")
+            .stdin(Stdio::piped())
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()
+        {
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            return child.wait().map(|s| s.success()).unwrap_or(false);
+        }
+        false
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        if let Ok(mut child) = Command::new("pbcopy").stdin(Stdio::piped()).spawn() {
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            return child.wait().map(|s| s.success()).unwrap_or(false);
+        }
+        false
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::io::Write;
+        use std::process::{Command, Stdio};
+
+        // Try xclip first
+        if let Ok(mut child) = Command::new("xclip")
+            .args(["-selection", "clipboard"])
+            .stdin(Stdio::piped())
+            .spawn()
+        {
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            if child.wait().map(|s| s.success()).unwrap_or(false) {
+                return true;
+            }
+        }
+
+        // Fall back to xsel
+        if let Ok(mut child) = Command::new("xsel")
+            .args(["--clipboard", "--input"])
+            .stdin(Stdio::piped())
+            .spawn()
+        {
+            if let Some(ref mut stdin) = child.stdin {
+                let _ = stdin.write_all(text.as_bytes());
+            }
+            return child.wait().map(|s| s.success()).unwrap_or(false);
+        }
+
+        false
+    }
+}
+
+fn draw_topology_view(
+    ui: &mut egui::Ui,
+    state: &mut AppState,
+    state_arc: &Arc<Mutex<AppState>>,
+    runtime: &tokio::runtime::Runtime,
+) {
     ui.vertical(|ui| {
         ui.heading(RichText::new("Network Topology").size(18.0).strong());
         ui.add_space(10.0);
 
-        if state.results.is_empty() && !state.is_discovering_topology {
-            ui.centered_and_justified(|ui| {
-                ui.add_space(20.0);
-                ui.label("No topology data yet. Run a scan to discover network topology.");
-            });
-        } else {
-            ui.heading("Network Topology View");
+        // Controls row
+        ui.horizontal(|ui| {
+            ui.label("Layout:");
+            egui::ComboBox::from_id_source("layout_combo")
+                .selected_text(match state.layout_type {
+                    LayoutType::ForceDirected => "Force-Directed",
+                    LayoutType::Circular => "Circular",
+                    LayoutType::Hierarchical => "Hierarchical",
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut state.layout_type, LayoutType::ForceDirected, "Force-Directed");
+                    ui.selectable_value(&mut state.layout_type, LayoutType::Circular, "Circular");
+                    ui.selectable_value(&mut state.layout_type, LayoutType::Hierarchical, "Hierarchical");
+                });
 
             ui.add_space(10.0);
 
-            ui.horizontal(|ui| {
-                ui.label("Layout:");
-                egui::ComboBox::from_id_source("layout_combo")
-                    .selected_text(format!("{:?}", state.layout_type))
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut state.layout_type,
-                            LayoutType::ForceDirected,
-                            "Force-Directed",
-                        );
-                        ui.selectable_value(
-                            &mut state.layout_type,
-                            LayoutType::Circular,
-                            "Circular",
-                        );
-                        ui.selectable_value(
-                            &mut state.layout_type,
-                            LayoutType::Hierarchical,
-                            "Hierarchical",
-                        );
-                    });
+            let discover_enabled = !state.subnet_input.is_empty() && !state.is_discovering_topology;
+            if ui.add_enabled(discover_enabled, egui::Button::new("Discover Network")).clicked() {
+                state.start_topology_discovery = true;
+                state.topology_widget = None;
+            }
 
-                ui.add_space(20.0);
-
-                if ui.button("Refresh").clicked() {
-                    if !state.subnet_input.is_empty() {
-                        state.is_discovering_topology = true;
-                        state.topology_widget = None;
-                    }
-                }
-
-                if ui.button("Layout").clicked() {
-                    if let Some(ref mut widget) = state.topology_widget {
-                        widget.compute_layout(state.layout_type.clone());
-                    }
+            if let Some(ref mut widget) = state.topology_widget {
+                if ui.button("Re-Layout").clicked() {
+                    widget.compute_layout(state.layout_type.clone());
                 }
 
                 if ui.button("Zoom Fit").clicked() {
-                    if let Some(ref mut widget) = state.topology_widget {
-                        widget.zoom_to_fit();
-                    }
+                    widget.zoom_to_fit();
                 }
 
-                if ui.button("Reset").clicked() {
-                    if let Some(ref mut widget) = state.topology_widget {
-                        widget.reset_view();
-                    }
+                if ui.button("Reset View").clicked() {
+                    widget.reset_view();
                 }
+            }
 
-                ui.add_space(20.0);
+            ui.add_space(20.0);
 
-                ui.label("Search:");
-                let response = ui.text_edit_singleline(&mut state.filter_text);
+            ui.label("Search:");
+            let search_response = ui.add(egui::TextEdit::singleline(&mut state.filter_text).desired_width(150.0));
 
-                if response.changed() {
-                    if let Some(ref mut widget) = state.topology_widget {
-                        widget.search(&state.filter_text);
+            if search_response.changed() {
+                if let Some(ref mut widget) = state.topology_widget {
+                    widget.search(&state.filter_text);
+                }
+            }
+        });
+
+        ui.add_space(10.0);
+        ui.separator();
+        ui.add_space(10.0);
+
+        // Main topology area
+        let available_rect = ui.available_rect_before_wrap();
+
+        if let Some(ref mut widget) = state.topology_widget {
+            widget.show(ui, available_rect);
+            state.topology_stats = Some(widget.get_stats());
+        } else if state.is_discovering_topology {
+            ui.vertical_centered(|ui| {
+                ui.add_space(50.0);
+                ui.spinner();
+                ui.add_space(10.0);
+                ui.label("Discovering network topology...");
+                ui.label(&state.topology_discovery_status);
+            });
+        } else {
+            ui.vertical_centered(|ui| {
+                ui.add_space(50.0);
+                ui.label("No topology data available");
+                ui.add_space(10.0);
+                ui.label("Enter a network address above and click 'Discover Network' to map the topology.");
+
+                if !state.subnet_input.is_empty() {
+                    ui.add_space(20.0);
+                    if ui.button("Start Discovery").clicked() {
+                        state.start_topology_discovery = true;
                     }
                 }
             });
+        }
 
-            ui.add_space(10.0);
-
-            ui.separator();
-
-            ui.add_space(10.0);
-
-            let panel_rect = ui.max_rect();
-
-            if let Some(ref mut widget) = state.topology_widget {
-                widget.show(ui, panel_rect);
-
-                let stats = widget.get_stats();
-                state.topology_stats = Some(stats);
-            } else if state.is_discovering_topology {
-                ui.centered_and_justified(|ui| {
-                    ui.spinner();
-                    ui.add_space(10.0);
-                    ui.label("Discovering network topology...");
-                    ui.label(state.topology_discovery_status.clone());
-                });
-            } else {
-                ui.centered_and_justified(|ui| {
-                    ui.label("No topology data");
-                    ui.add_space(10.0);
-                    ui.label("Enter a network above and click 'Refresh' to discover.");
-
-                    if ui.button("Discover Network").clicked() {
-                        if !state.subnet_input.is_empty() {
-                            state.is_discovering_topology = true;
-                        }
-                    }
-                });
-            }
-
+        // Stats footer
+        if let Some(ref stats) = state.topology_stats {
             ui.add_space(10.0);
             ui.separator();
             ui.add_space(5.0);
 
             ui.horizontal(|ui| {
-                if let Some(ref stats) = state.topology_stats {
-                    ui.label(RichText::new(format!("Nodes: {}", stats.node_count)).small());
-                    ui.add_space(20.0);
-                    ui.label(RichText::new(format!("Edges: {}", stats.edge_count)).small());
-                    ui.add_space(20.0);
-                    ui.label(RichText::new(format!("Routers: {}", stats.router_count)).small());
-                    ui.add_space(20.0);
-                    ui.label(RichText::new(format!("Servers: {}", stats.server_count)).small());
-                    ui.add_space(20.0);
-                    ui.label(RichText::new(format!("IoT: {}", stats.iot_count)).small());
-                }
+                ui.label(RichText::new(format!("Nodes: {}", stats.node_count)).small());
+                ui.add_space(15.0);
+                ui.label(RichText::new(format!("Edges: {}", stats.edge_count)).small());
+                ui.add_space(15.0);
+                ui.label(RichText::new(format!("Routers: {}", stats.router_count)).small());
+                ui.add_space(15.0);
+                ui.label(RichText::new(format!("Servers: {}", stats.server_count)).small());
+                ui.add_space(15.0);
+                ui.label(RichText::new(format!("IoT: {}", stats.iot_count)).small());
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    ui.label("Legend:");
-                    ui.add_space(10.0);
-                    ui.colored_label(Color32::from_rgb(100, 200, 100), "Router");
-                    ui.add_space(10.0);
-                    ui.colored_label(Color32::from_rgb(80, 150, 220), "Server");
-                    ui.add_space(10.0);
-                    ui.colored_label(Color32::from_rgb(220, 80, 80), "Firewall");
-                    ui.add_space(10.0);
                     ui.colored_label(Color32::from_rgb(100, 220, 220), "IoT");
+                    ui.add_space(8.0);
+                    ui.colored_label(Color32::from_rgb(220, 80, 80), "Firewall");
+                    ui.add_space(8.0);
+                    ui.colored_label(Color32::from_rgb(80, 150, 220), "Server");
+                    ui.add_space(8.0);
+                    ui.colored_label(Color32::from_rgb(100, 200, 100), "Router");
+                    ui.add_space(8.0);
+                    ui.label("Legend:");
                 });
             });
         }
     });
+
+    // Mark params as used (needed for future async operations)
+    let _ = (state_arc, runtime);
 }
