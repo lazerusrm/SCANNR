@@ -4,6 +4,9 @@
 *.pdb
 Cargo.lock
 
+# Logs
+*.log
+
 # IDE and editor files
 .idea/
 .vscode/
