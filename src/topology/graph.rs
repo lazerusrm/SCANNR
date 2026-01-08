@@ -17,6 +17,12 @@ pub struct TopologyGraph {
     pub graph: Graph<NodeData, EdgeData, Undirected>,
 }
 
+impl Default for TopologyGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TopologyGraph {
     pub fn new() -> Self {
         TopologyGraph {
@@ -109,13 +115,10 @@ impl TopologyGraphBuilder {
         for (ip, host) in &result.probed_hosts {
             let mac = if let Some(mac_str) = &host.mac {
                 Some(mac_str.clone())
-            } else if let Some(arp_entry) = result.arp_entries.iter().find(|a| a.ip == *ip) {
-                Some(arp_entry.mac.clone())
-            } else {
-                None
-            };
-
-            let vendor = mac.as_ref().and_then(|m| {
+                            } else {
+                                result.arp_entries.iter().find(|a| a.ip == *ip).map(|arp_entry| arp_entry.mac.clone())
+                            };
+                        let vendor = mac.as_ref().and_then(|m| {
                 self.lookup_vendor(m, &mut mac_cache)
             });
 
@@ -171,17 +174,19 @@ impl TopologyGraphBuilder {
 
             for hop in &traceroute.hops {
                 if let Some(ip) = hop.ip {
-                    if previous_ip.is_some() && previous_ip != Some(ip) {
-                        self.add_edge(
-                            previous_ip.unwrap(),
-                            ip,
-                            EdgeData {
-                                connection_type: ConnectionType::TracerouteHop,
-                                latency_ms: hop.latency_us.map(|us| us as u32),
-                                hop_count: None,
-                                bandwidth_estimate: None,
-                            },
-                        );
+                    if let Some(prev) = previous_ip {
+                        if prev != ip {
+                            self.add_edge(
+                                prev,
+                                ip,
+                                EdgeData {
+                                    connection_type: ConnectionType::TracerouteHop,
+                                    latency_ms: hop.latency_us.map(|us| (us / 1000) as u32),
+                                    hop_count: Some(hop.hop_number),
+                                    bandwidth_estimate: None,
+                                },
+                            );
+                        }
                     }
                     previous_ip = Some(ip);
                 }

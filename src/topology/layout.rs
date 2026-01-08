@@ -121,7 +121,7 @@ impl LayoutEngine {
         }
 
         let mut _prev_positions = self.positions.clone();
-        let mut _min_delta = std::f32::MAX;
+        let mut _min_delta = f32::MAX;
         let mut _converged = false;
 
         for iteration in 0..self.config.max_iterations {
@@ -200,10 +200,10 @@ impl LayoutEngine {
             return Bounds::new(-1000.0, -1000.0, 2000.0, 2000.0);
         }
 
-        let mut min_x = std::f32::MAX;
-        let mut min_y = std::f32::MAX;
-        let mut max_x = std::f32::MIN;
-        let mut max_y = std::f32::MIN;
+        let mut min_x = f32::MAX;
+        let mut min_y = f32::MAX;
+        let mut max_x = f32::MIN;
+        let mut max_y = f32::MIN;
 
         for pos in self.positions.values() {
             min_x = min_x.min(pos.x);
@@ -280,11 +280,9 @@ impl LayoutEngine {
             let force =
                 self.config.repulsion_strength / dist * self.config.repulsion_strength / dist;
             *total_force += diff.normalize_or_zero() * force;
-        } else {
-            if let Some(children_iter) = node.children() {
-                for child in children_iter {
-                    self.calculate_repulsion_recursive(child, pos, total_force, Some(center));
-                }
+        } else if let Some(children_iter) = node.children() {
+            for child in children_iter {
+                self.calculate_repulsion_recursive(child, pos, total_force, Some(center));
             }
         }
     }
@@ -471,7 +469,7 @@ impl QuadTree {
 
     pub fn get_point(&self) -> Option<(Vec2, NodeIndex)> {
         if self.points.len() == 1 {
-            Some(self.points[0].clone())
+            Some(self.points[0])
         } else {
             None
         }

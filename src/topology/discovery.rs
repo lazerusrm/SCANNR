@@ -200,7 +200,7 @@ pub async fn trace_route(
         ttl += 1;
     }
 
-    let total_time_ms = start_time.elapsed().as_millis() as u128;
+    let total_time_ms = start_time.elapsed().as_millis();
 
     TracerouteResult {
         target,

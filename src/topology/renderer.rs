@@ -32,11 +32,9 @@ impl LODLevel {
             else if zoom < 0.7 { LODLevel::Medium }
             else if zoom < 1.5 { LODLevel::High }
             else { LODLevel::Full }
-        } else {
-            if zoom < 0.4 { LODLevel::Medium }
+        } else if zoom < 0.4 { LODLevel::Medium }
             else if zoom < 1.0 { LODLevel::High }
             else { LODLevel::Full }
-        }
     }
 
     pub fn show_labels(&self) -> bool {
@@ -114,6 +112,7 @@ pub struct TopologyRenderer {
     positions: HashMap<NodeIndex, Pos2>,
     config: RenderConfig,
     layout_config: LayoutConfig,
+    #[allow(dead_code)]
     tooltip_data: Option<HoveredNodeInfo>,
     dragging_node: Option<NodeIndex>,
 }
@@ -263,8 +262,8 @@ impl TopologyRenderer {
             }
 
             let node_data = &self.graph.graph[node_idx];
-            let is_selected = view_state.selected_node.as_ref().map_or(false, |id| id.0 == node_data.ip);
-            let is_hovered = view_state.hovered_node.as_ref().map_or(false, |id| id.0 == node_data.ip);
+            let is_selected = view_state.selected_node.as_ref().is_some_and(|id| id.0 == node_data.ip);
+            let is_hovered = view_state.hovered_node.as_ref().is_some_and(|id| id.0 == node_data.ip);
 
             let fill_color = self.get_device_color(node_data.device_type);
             let mut stroke_color = self.config.node_stroke_color;

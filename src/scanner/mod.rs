@@ -127,7 +127,7 @@ impl Scanner {
             finished_scans += 1.0;
             if let Some(ref progress_cb) = on_progress {
                 // Update progress every 10 scans for smoother GUI feedback
-                if (finished_scans as usize) % 10 == 0 {
+                if (finished_scans as usize).is_multiple_of(10) {
                     progress_cb(finished_scans / total_scans);
                 }
             }
@@ -190,7 +190,7 @@ impl Scanner {
                     if nr_try == tries {
                         error_string.push(' ');
                         error_string.push_str(&socket.ip().to_string());
-                        return Err(io::Error::new(io::ErrorKind::Other, error_string));
+                        return Err(io::Error::other(error_string));
                     }
                 }
             };
@@ -219,10 +219,10 @@ impl Scanner {
             }
         }
 
-        Err(io::Error::new(
-            io::ErrorKind::Other,
-            format!("UDP scan timed-out for all tries on socket {}", socket),
-        ))
+        Err(io::Error::other(format!(
+            "UDP scan timed-out for all tries on socket {}",
+            socket
+        )))
     }
 
     /// Performs the connection to the socket with timeout

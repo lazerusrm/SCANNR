@@ -103,8 +103,8 @@ impl Exporter {
 
             output.push_str(&format!(
                 "  \"{}\" -> \"{}\" [\n",
-                src_data.ip.to_string(),
-                dst_data.ip.to_string()
+                src_data.ip,
+                dst_data.ip
             ));
             output.push_str(&format!("    label=\"{}\";\n", label));
 

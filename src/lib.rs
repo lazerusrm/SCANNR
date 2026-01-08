@@ -1,3 +1,4 @@
+#![allow(non_snake_case)]
 //! This crate exposes the internal functionality of the
 //! [SCANNR](https://github.com/lazerusrm/SCANNR) suite, based on the
 //! [RustScan](https://rustscan.github.io/RustScan) port scanner.
@@ -54,6 +55,7 @@ pub mod benchmark;
 
 pub mod scripts;
 
+#[allow(non_snake_case)]
 pub mod address;
 
 pub mod generated;

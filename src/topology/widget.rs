@@ -2,17 +2,12 @@ use crate::topology::{NodeData, TopologyGraph, TopologyViewState};
 use crate::topology::renderer::{TopologyRenderer};
 use egui::{Rect, Ui, Layout, Align};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub enum LayoutType {
+    #[default]
     ForceDirected,
     Circular,
     Hierarchical,
-}
-
-impl Default for LayoutType {
-    fn default() -> Self {
-        LayoutType::ForceDirected
-    }
 }
 
 #[derive(Debug)]
@@ -111,7 +106,7 @@ impl TopologyWidget {
         let found = self.renderer.graph.graph.node_weights()
             .find(|n| {
                 n.ip.to_string().contains(&query) || 
-                n.hostname.as_ref().map_or(false, |h| h.to_lowercase().contains(&query))
+                n.hostname.as_ref().is_some_and(|h| h.to_lowercase().contains(&query))
             });
 
         if let Some(node) = found {

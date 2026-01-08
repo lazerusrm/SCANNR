@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::net::{IpAddr, Ipv4Addr};
 use std::sync::Mutex;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct GeoInfo {
     pub country: Option<String>,
     pub country_iso: Option<String>,
@@ -18,23 +18,6 @@ pub struct GeoInfo {
     pub accuracy_radius: Option<u32>,
 }
 
-impl Default for GeoInfo {
-    fn default() -> Self {
-        GeoInfo {
-            country: None,
-            country_iso: None,
-            city: None,
-            subdivision: None,
-            subdivision_iso: None,
-            metro_code: None,
-            time_zone: None,
-            is_in_european_union: false,
-            latitude: None,
-            longitude: None,
-            accuracy_radius: None,
-        }
-    }
-}
 
 fn get_english_name(names: &maxminddb::geoip2::Names) -> Option<String> {
     names
@@ -51,6 +34,12 @@ fn get_english_name(names: &maxminddb::geoip2::Names) -> Option<String> {
 pub struct GeoLookup {
     reader: Option<maxminddb::Reader<std::vec::Vec<u8>>>,
     fallback_cache: std::collections::HashMap<String, GeoInfo>,
+}
+
+impl Default for GeoLookup {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GeoLookup {

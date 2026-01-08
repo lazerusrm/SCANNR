@@ -76,21 +76,11 @@ impl ScanMode {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct ExportFeedback {
     pub show: bool,
     pub message: String,
     pub is_error: bool,
-}
-
-impl Default for ExportFeedback {
-    fn default() -> Self {
-        Self {
-            show: false,
-            message: String::new(),
-            is_error: false,
-        }
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -367,7 +357,7 @@ impl ScannrApp {
                 // Extract network address for subnet input (e.g., "192.168.1.0/24")
                 if let Some(pos) = primary.subnet.find(' ') {
                     // Format is "192.168.1.0 (eth0)" - extract just the IP/CIDR part
-                    state.subnet_input = format!("{}/24", primary.subnet[..pos].to_string());
+                    state.subnet_input = format!("{}/24", &primary.subnet[..pos]);
                 } else {
                     state.subnet_input = format!("{}/24", primary.subnet);
                 }
@@ -382,89 +372,87 @@ impl ScannrApp {
     }
 }
 
-fn enumerate_network_interfaces() -> impl std::future::Future<Output = Vec<NetworkInterface>> {
-    async {
-        let mut interfaces = Vec::new();
+async fn enumerate_network_interfaces() -> Vec<NetworkInterface> {
+    let mut interfaces = Vec::new();
 
-        let active_interface_name = detect_default_route_interface();
+    let active_interface_name = detect_default_route_interface();
 
-        if let Ok(ifaces) = if_addrs::get_if_addrs() {
-            let mut subnet_map: HashMap<String, (String, Option<IpAddr>)> = HashMap::new();
+    if let Ok(ifaces) = if_addrs::get_if_addrs() {
+        let mut subnet_map: HashMap<String, (String, Option<IpAddr>)> = HashMap::new();
 
-            for iface in &ifaces {
-                let name = &iface.name;
+        for iface in &ifaces {
+            let name = &iface.name;
 
-                let lower_name = name.to_lowercase();
-                if lower_name.starts_with("lo")
-                    || lower_name.starts_with("loopback")
-                    || lower_name.starts_with("docker")
-                    || lower_name.starts_with("veth")
-                    || lower_name.starts_with("csi")
-                    || lower_name.starts_with("hsr")
-                    || lower_name.starts_with("ifb")
-                    || lower_name.starts_with("nm")
-                    || lower_name.starts_with("br")
-                    || lower_name.starts_with("tun")
-                    || lower_name.starts_with("tap")
-                    || lower_name == "lo0"
-                {
-                    continue;
-                }
-
-                let addr = &iface.addr;
-                let ip = addr.ip();
-
-                if ip.is_loopback() {
-                    continue;
-                }
-
-                if let IpAddr::V4(ipv4) = ip {
-                    let net = ipnetwork::Ipv4Network::new(ipv4, 24).unwrap();
-                    let ip_str = net.network().to_string();
-                    let prefix = net.prefix();
-                    let gateway: IpAddr = net.broadcast().into();
-
-                    let existing = subnet_map
-                        .entry(format!("{}/{}", ip_str, prefix))
-                        .or_insert_with(|| (format!("{} ({})", ip_str, name), Some(gateway)));
-
-                    if name.starts_with("eth") || name.starts_with("en") || name.starts_with("wi") {
-                        existing.0 = format!("{} ({})", ip_str, name);
-                    }
-                }
+            let lower_name = name.to_lowercase();
+            if lower_name.starts_with("lo")
+                || lower_name.starts_with("loopback")
+                || lower_name.starts_with("docker")
+                || lower_name.starts_with("veth")
+                || lower_name.starts_with("csi")
+                || lower_name.starts_with("hsr")
+                || lower_name.starts_with("ifb")
+                || lower_name.starts_with("nm")
+                || lower_name.starts_with("br")
+                || lower_name.starts_with("tun")
+                || lower_name.starts_with("tap")
+                || lower_name == "lo0"
+            {
+                continue;
             }
 
-            for (_, (name, gateway)) in subnet_map {
-                let name_for_check = name.clone();
-                let is_active = active_interface_name
-                    .as_ref()
-                    .map(|active| name_for_check.contains(active))
-                    .unwrap_or(false);
+            let addr = &iface.addr;
+            let ip = addr.ip();
 
-                let priority = if is_active {
-                    0
-                } else if name_for_check.contains("eth")
-                    || name_for_check.contains("en")
-                    || name_for_check.contains("wi")
-                    || name_for_check.contains("wlan")
-                {
-                    1
-                } else {
-                    2
-                };
+            if ip.is_loopback() {
+                continue;
+            }
 
-                interfaces.push(NetworkInterface {
-                    name: name.clone(),
-                    subnet: name,
-                    gateway,
-                    priority,
-                });
+            if let IpAddr::V4(ipv4) = ip {
+                let net = ipnetwork::Ipv4Network::new(ipv4, 24).unwrap();
+                let ip_str = net.network().to_string();
+                let prefix = net.prefix();
+                let gateway: IpAddr = net.broadcast().into();
+
+                let existing = subnet_map
+                    .entry(format!("{}/{}", ip_str, prefix))
+                    .or_insert_with(|| (format!("{} ({})", ip_str, name), Some(gateway)));
+
+                if name.starts_with("eth") || name.starts_with("en") || name.starts_with("wi") {
+                    existing.0 = format!("{} ({})", ip_str, name);
+                }
             }
         }
 
-        interfaces.sort_by_key(|i| i.priority);
-        interfaces
+        for (_, (name, gateway)) in subnet_map {
+            let name_for_check = name.clone();
+            let is_active = active_interface_name
+                .as_ref()
+                .map(|active| name_for_check.contains(active))
+                .unwrap_or(false);
+
+            let priority = if is_active {
+                0
+            } else if name_for_check.contains("eth")
+                || name_for_check.contains("en")
+                || name_for_check.contains("wi")
+                || name_for_check.contains("wlan")
+            {
+                1
+            } else {
+                2
+            };
+
+            interfaces.push(NetworkInterface {
+                name: name.clone(),
+                subnet: name,
+                gateway,
+                priority,
+            });
+        }
     }
+
+    interfaces.sort_by_key(|i| i.priority);
+    interfaces
 }
 
 #[cfg(target_os = "windows")]
@@ -1446,7 +1434,7 @@ fn draw_list_view(ui: &mut egui::Ui, state: &mut AppState) {
                     .unwrap_or(false);
                 let port_match = state
                     .filter_by_port
-                    .map_or(false, |p| host.ports.contains(&p));
+                    .is_some_and(|p| host.ports.contains(&p));
 
                 ip_match || hostname_match || os_match || port_match
             })
@@ -1590,35 +1578,29 @@ fn draw_list_view(ui: &mut egui::Ui, state: &mut AppState) {
                             });
 
                             // Quick action buttons
-                            if host.ports.contains(&80)
+                            if (host.ports.contains(&80)
                                 || host.ports.contains(&443)
-                                || host.ports.contains(&8080)
+                                || host.ports.contains(&8080))
+                                && ui.small_button("🌐 Web").clicked()
                             {
-                                if ui.small_button("🌐 Web").clicked() {
-                                    let port = if host.ports.contains(&443) {
-                                        443
-                                    } else if host.ports.contains(&8080) {
-                                        8080
-                                    } else {
-                                        80
-                                    };
-                                    let protocol = if port == 443 { "https" } else { "http" };
-                                    open_in_browser(&format!(
-                                        "{}://{}:{}",
-                                        protocol, host.ip, port
-                                    ));
-                                }
+                                let port = if host.ports.contains(&443) {
+                                    443
+                                } else if host.ports.contains(&8080) {
+                                    8080
+                                } else {
+                                    80
+                                };
+                                let protocol = if port == 443 { "https" } else { "http" };
+                                open_in_browser(&format!("{}://{}:{}", protocol, host.ip, port));
                             }
 
-                            if host.ports.contains(&22) {
-                                if ui.small_button("🔑 SSH").clicked() {
-                                    state.ssh_dialog = SshDialogState {
-                                        show: true,
-                                        ip: Some(host.ip),
-                                        port: 22,
-                                        ..Default::default()
-                                    };
-                                }
+                            if host.ports.contains(&22) && ui.small_button("🔑 SSH").clicked() {
+                                state.ssh_dialog = SshDialogState {
+                                    show: true,
+                                    ip: Some(host.ip),
+                                    port: 22,
+                                    ..Default::default()
+                                };
                             }
                         });
                     });
