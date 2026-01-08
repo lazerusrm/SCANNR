@@ -353,6 +353,7 @@ pub async fn discover_network_fast(
     max_concurrent: usize,
     timeout_ms: u64,
     cancel_flag: Arc<AtomicBool>,
+    on_progress: Option<Arc<dyn Fn(f32) + Send + Sync>>,
 ) -> DiscoveryResult {
     let arp_entries = get_arp_entries().await;
     let mut probed_hosts = HashMap::new();
@@ -363,6 +364,7 @@ pub async fn discover_network_fast(
         .take(256)
         .collect();
 
+    let total_targets = targets.len();
     let common_ports: Vec<u16> = COMMON_PORTS.to_vec();
     let common_ports = Arc::new(common_ports);
     let timeout = Duration::from_millis(timeout_ms);
@@ -392,9 +394,17 @@ pub async fn discover_network_fast(
         handles.push(handle);
     }
 
+    let mut completed_targets = 0;
     for handle in handles {
         if let Ok(Some(host)) = handle.await {
             probed_hosts.insert(host.ip, host);
+        }
+        
+        completed_targets += 1;
+        if let Some(ref cb) = on_progress {
+            if total_targets > 0 {
+                cb(completed_targets as f32 / total_targets as f32);
+            }
         }
     }
 
@@ -443,7 +453,7 @@ pub async fn discover_network(
     timeout: Duration,
     cancel_flag: Arc<AtomicBool>,
 ) -> DiscoveryResult {
-    discover_network_fast(_subnet, max_concurrent, timeout.as_millis() as u64, cancel_flag).await
+    discover_network_fast(_subnet, max_concurrent, timeout.as_millis() as u64, cancel_flag, None).await
 }
 
 fn parse_subnet(subnet: &str) -> Vec<IpAddr> {

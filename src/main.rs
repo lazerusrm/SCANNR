@@ -97,7 +97,7 @@ fn main() {
     debug!("Scanner finished building: {:?}", scanner);
 
     let mut portscan_bench = NamedTimer::start("Portscan");
-    let scan_result = block_on(scanner.run(None));
+    let scan_result = block_on(scanner.run(None, None));
     portscan_bench.end();
     benchmarks.push(portscan_bench);
 

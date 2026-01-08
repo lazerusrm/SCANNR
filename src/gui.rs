@@ -1,5 +1,5 @@
 //! Modern GUI for SCANNR with light/dark/auto theme support
-use crate::input::{PortRange, ScanOrder};
+use crate::input::ScanOrder;
 use crate::port_strategy::PortStrategy;
 use crate::scanner::Scanner;
 use crate::topology::widget::{TopologyWidget, WidgetTopologyStats};
@@ -568,18 +568,36 @@ impl eframe::App for ScannrApp {
             state.start_topology_discovery = false;
             state.is_discovering_topology = true;
             state.topology_discovery_status = "Starting discovery...".to_string();
+            state.scan_progress = 0.0;
 
             let subnet = state.subnet_input.clone();
             let cancel_flag = Arc::new(AtomicBool::new(false));
             let state_clone = self.state.clone();
             let ctx_clone = ctx.clone();
 
+            let on_progress = std::sync::Arc::new(move |progress: f32| {
+                if let Ok(mut guard) = state_clone.lock() {
+                    guard.scan_progress = progress;
+                    guard.topology_discovery_status =
+                        format!("Discovering... {:.0}%", progress * 100.0);
+                }
+                ctx_clone.request_repaint();
+            });
+
+            let state_clone = self.state.clone();
+            let ctx_clone = ctx.clone();
+
             self.runtime.spawn(async move {
                 let cancel = cancel_flag;
 
-                let graph =
-                    crate::topology::graph::discover_and_build_fast(&subnet, 128, 150, cancel)
-                        .await;
+                let graph = crate::topology::graph::discover_and_build_fast(
+                    &subnet,
+                    128,
+                    150,
+                    cancel,
+                    Some(on_progress),
+                )
+                .await;
 
                 let mut state = state_clone.lock().unwrap();
                 let mut widget = TopologyWidget::new(graph);
@@ -587,6 +605,7 @@ impl eframe::App for ScannrApp {
                 state.topology_widget = Some(widget);
                 state.is_discovering_topology = false;
                 state.topology_discovery_status = "Discovery complete".to_string();
+                state.scan_progress = 1.0;
 
                 ctx_clone.request_repaint();
             });
@@ -1016,7 +1035,6 @@ async fn run_scan(
 
         let total_ips = ips.len();
         let total_ports = ports.len();
-        let total_ops = total_ips * total_ports;
 
         if total_ips == 0 || total_ports == 0 {
             let mut state_guard = state.lock().unwrap();
@@ -1026,12 +1044,7 @@ async fn run_scan(
             return;
         }
 
-        log::info!(
-            "Starting scan: {} IPs x {} ports = {} total operations",
-            total_ips,
-            total_ports,
-            total_ops
-        );
+        log::info!("Starting scan: {} IPs x {} ports", total_ips, total_ports);
 
         {
             let mut state_guard = state.lock().unwrap();
@@ -1049,109 +1062,219 @@ async fn run_scan(
 
         let timeout = Duration::from_millis(timeout.into());
 
-        let port_range = if ports.len() > 0 {
-            let min = *ports.iter().min().unwrap();
-            let max = *ports.iter().max().unwrap();
-            PortRange {
-                start: min,
-                end: max,
-            }
-        } else {
-            PortRange { start: 1, end: 1 }
-        };
-
-        let port_strategy = PortStrategy::pick(&Some(port_range), None, ScanOrder::Serial);
-
-        // Update status - preparing scan
+        // Phase 0: ARP & Vendor Discovery (Immediate results for already cached neighbors)
         {
             let mut guard = state.lock().unwrap();
-            guard.scan_status = format!(
-                "Preparing to scan {} hosts on {} ports...",
-                total_ips, total_ports
-            );
-            guard.scan_progress = 0.0;
+            guard.scan_status = "Reading ARP cache...".to_string();
+            guard.scan_progress = 0.01;
         }
         ctx.request_repaint();
 
-        let scanner = Scanner::new(
+        let ip_set: HashSet<IpAddr> = ips.iter().copied().collect();
+        let arp_entries = crate::topology::discovery::get_arp_entries().await;
+        {
+            let mut guard = state.lock().unwrap();
+            for arp in arp_entries {
+                let ip = IpAddr::V4(arp.ip);
+                if ip_set.contains(&ip) {
+                    let vendor = crate::oui::lookup_vendor(&arp.mac);
+                    let host = HostInfo {
+                        ip,
+                        hostname: None,
+                        mac: Some(arp.mac),
+                        vendor,
+                        ports: Vec::new(),
+                        os: Some("Active (Cached)".to_string()),
+                        service_names: HashMap::new(),
+                    };
+                    guard.results.push(host);
+                }
+            }
+        }
+        ctx.request_repaint();
+
+        // Phase 0.5: Active Host Discovery (TCP Ping Sweep)
+        // We probe a common port on EVERY IP to ensure the OS populates the ARP table
+        // and we find hosts not in the cache.
+        {
+            let mut guard = state.lock().unwrap();
+            guard.scan_status = format!("Discovering active hosts in {}...", subnet);
+        }
+        ctx.request_repaint();
+
+        // Use a tiny timeout for discovery
+        let discovery_timeout = Duration::from_millis(50);
+        let discovery_strategy =
+            PortStrategy::pick(&None, Some(vec![80, 443, 445, 22]), ScanOrder::Serial);
+        let discovery_scanner = Scanner::new(
+            &ips,
+            batch_size.max(5000), // High concurrency for discovery
+            discovery_timeout,
+            1,
+            true,
+            discovery_strategy,
+            false,
+            vec![],
+            false,
+        );
+
+        // Result callback for discovery: just to trigger ARP lookups later or find hosts
+        let state_discovery_clone = state.clone();
+        let on_discovery_result = std::sync::Arc::new(move |socket: std::net::SocketAddr| {
+            if let Ok(mut guard) = state_discovery_clone.lock() {
+                let ip = socket.ip();
+                if !guard.results.iter().any(|h| h.ip == ip) {
+                    let host = HostInfo {
+                        ip,
+                        hostname: None,
+                        mac: None,
+                        vendor: None,
+                        ports: vec![socket.port()],
+                        os: Some("Active".to_string()),
+                        service_names: HashMap::new(),
+                    };
+                    guard.results.push(host);
+                }
+            }
+        });
+
+        discovery_scanner.run(Some(on_progress.clone()), Some(on_discovery_result)).await;
+
+        // Refresh ARP after discovery probe
+        let arp_entries = crate::topology::discovery::get_arp_entries().await;
+        {
+            let mut guard = state.lock().unwrap();
+            for arp in arp_entries {
+                let ip = IpAddr::V4(arp.ip);
+                if let Some(host) = guard.results.iter_mut().find(|h| h.ip == ip) {
+                    if host.mac.is_none() {
+                        host.mac = Some(arp.mac.clone());
+                        host.vendor = crate::oui::lookup_vendor(&arp.mac);
+                    }
+                }
+            }
+        }
+        ctx.request_repaint();
+
+        // Create callbacks for main scan phases
+        let state_clone = state.clone();
+        let ctx_clone = ctx.clone();
+
+        // Progress should be split between discovery, phase 1 and phase 2
+        let on_progress = std::sync::Arc::new(move |progress: f32| {
+            if let Ok(mut guard) = state_clone.lock() {
+                let status = guard.scan_status.clone();
+                if status.contains("Discovering active hosts") {
+                    guard.scan_progress = progress * 0.1;
+                } else if status.contains("Quick probing") {
+                    guard.scan_progress = 0.1 + (progress * 0.2);
+                } else if status.contains("Scanning remaining") {
+                    guard.scan_progress = 0.3 + (progress * 0.7);
+                }
+            }
+            ctx_clone.request_repaint();
+        });
+
+        // Create result callback for real-time updates
+        let state_result_clone = state.clone();
+        let ctx_result_clone = ctx.clone();
+        let on_result = std::sync::Arc::new(move |socket: std::net::SocketAddr| {
+            if let Ok(mut guard) = state_result_clone.lock() {
+                let ip = socket.ip();
+                let port = socket.port();
+
+                // Find existing host or create new one
+                let mut is_new_port = false;
+                if let Some(host) = guard.results.iter_mut().find(|h| h.ip == ip) {
+                    if !host.ports.contains(&port) {
+                        host.ports.push(port);
+                        host.ports.sort_unstable();
+                        host.os = Some(detect_device_type(&host.ports));
+                        is_new_port = true;
+                    }
+                } else {
+                    let mut host = HostInfo {
+                        ip,
+                        hostname: None,
+                        mac: None,
+                        vendor: None,
+                        ports: vec![port],
+                        os: None,
+                        service_names: HashMap::new(),
+                    };
+                    host.os = Some(detect_device_type(&host.ports));
+                    guard.results.push(host);
+                    is_new_port = true;
+                }
+
+                if is_new_port {
+                    guard.scanned_ports += 1;
+                }
+            }
+            ctx_result_clone.request_repaint();
+        });
+        // Phase 1: Quick Scan (Common ports)
+        let quick_ports = QUICK_PORTS.to_vec();
+        let quick_strategy =
+            PortStrategy::pick(&None, Some(quick_ports.clone()), ScanOrder::Serial);
+        let quick_scanner = Scanner::new(
             &ips,
             batch_size,
             timeout,
             1,
             true,
-            port_strategy,
+            quick_strategy,
             false,
             vec![],
             udp_scan,
         );
 
-        // Update status - scanning
         {
             let mut guard = state.lock().unwrap();
-            guard.scan_status = format!("Scanning {} hosts...", total_ips);
+            guard.scan_status = format!("Quick probing {} hosts for common services...", total_ips);
         }
         ctx.request_repaint();
 
-        // Create progress callback
-        let state_clone = state.clone();
-        let ctx_clone = ctx.clone();
-        let on_progress = std::sync::Arc::new(move |progress: f32| {
-            if let Ok(mut guard) = state_clone.lock() {
-                guard.scan_progress = progress;
+        quick_scanner.run(Some(on_progress.clone()), Some(on_result.clone())).await;
+
+        // Phase 2: Main Scan (Remaining ports)
+        let remaining_ports: Vec<u16> = ports
+            .iter()
+            .filter(|p| !quick_ports.contains(p))
+            .copied()
+            .collect();
+
+        if !remaining_ports.is_empty() {
+            {
+                let mut guard = state.lock().unwrap();
+                guard.scan_status = format!("Scanning remaining ports on {} hosts...", total_ips);
             }
-            ctx_clone.request_repaint();
-        });
+            ctx.request_repaint();
 
-        let open_sockets = scanner.run(Some(on_progress)).await;
-
-        // Update status - processing results
-        {
-            let mut guard = state.lock().unwrap();
-            guard.scan_status = "Processing results...".to_string();
+            let main_strategy = PortStrategy::pick(&None, Some(remaining_ports), ScanOrder::Serial);
+            let main_scanner = Scanner::new(
+                &ips,
+                batch_size,
+                timeout,
+                1,
+                true,
+                main_strategy,
+                false,
+                vec![],
+                udp_scan,
+            );
+            main_scanner.run(Some(on_progress), Some(on_result)).await;
         }
-        ctx.request_repaint();
-
-        let mut host_map: HashMap<IpAddr, Vec<u16>> = HashMap::new();
-
-        for socket_addr in open_sockets {
-            host_map
-                .entry(socket_addr.ip())
-                .or_insert_with(Vec::new)
-                .push(socket_addr.port());
-        }
-
-        // Process results and update UI
-        let mut results = Vec::new();
-        let mut scanned_ports = 0usize;
-        for (ip, ports) in host_map {
-            let ports_len = ports.len();
-            scanned_ports += ports_len;
-            let detected_os = detect_device_type(&ports);
-            let host = HostInfo {
-                ip,
-                hostname: None,
-                mac: None,
-                vendor: None,
-                ports,
-                os: Some(detected_os.clone()),
-                service_names: HashMap::new(),
-            };
-            results.push(host);
-        }
-
-        ctx.request_repaint();
 
         // Final update
         let mut state_guard = state.lock().unwrap();
-        state_guard.results = results;
         state_guard.is_scanning = false;
         state_guard.scan_status = format!(
             "Scan complete! Found {} hosts with {} total open ports",
             state_guard.results.len(),
-            scanned_ports
+            state_guard.scanned_ports
         );
         state_guard.scan_progress = 1.0;
-        state_guard.scanned_ports = scanned_ports;
         drop(state_guard);
 
         ctx.request_repaint();
@@ -1387,17 +1510,17 @@ fn draw_list_view(ui: &mut egui::Ui, state: &mut AppState) {
                                     if let Some(ref os) = host.os {
                                         ui.label(
                                             RichText::new(os)
-                                                .small()
+                                                .size(16.0)
                                                 .color(Color32::from_rgb(100, 200, 100)),
                                         );
                                     }
                                     if let Some(ref vendor) = host.vendor {
                                         ui.add_space(10.0);
-                                        ui.label(RichText::new(vendor).small().weak());
+                                        ui.label(RichText::new(vendor).size(14.0).weak());
                                     }
                                     if let Some(ref mac) = host.mac {
                                         ui.add_space(10.0);
-                                        ui.label(RichText::new(mac).small().weak());
+                                        ui.label(RichText::new(mac).size(14.0).weak());
                                     }
                                 },
                             );
@@ -1416,7 +1539,7 @@ fn draw_list_view(ui: &mut egui::Ui, state: &mut AppState) {
                         );
                         ui.label(
                             RichText::new(ports_text)
-                                .size(13.0)
+                                .size(16.0)
                                 .color(Color32::from_rgb(100, 200, 100)),
                         );
 
@@ -1798,6 +1921,9 @@ fn draw_topology_view(
                 ui.spinner();
                 ui.add_space(10.0);
                 ui.label("Discovering network topology...");
+                ui.add_space(5.0);
+                ui.add(egui::ProgressBar::new(state.scan_progress).show_percentage());
+                ui.add_space(10.0);
                 ui.label(&state.topology_discovery_status);
             });
         } else {

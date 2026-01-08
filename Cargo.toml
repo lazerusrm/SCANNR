@@ -76,11 +76,11 @@ strip = true
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [[bin]]
-name = "scannr"
+name = "scannr-cli"
 path = "src/main.rs"
 
 [[bin]]
-name = "SCANNR"
+name = "scannr-gui"
 path = "src/gui_main.rs"
 
 [lints.rust]

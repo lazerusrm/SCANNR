@@ -188,44 +188,45 @@ impl TopologyGraphBuilder {
             }
         }
 
-        let arp_ips: HashMap<IpAddr, &crate::topology::discovery::ArpEntry> = result
+        // Pre-calculate MAC prefixes to avoid repeated string manipulation in O(N^2) loop
+        let arp_entries_with_prefix: Vec<(IpAddr, &crate::topology::discovery::ArpEntry, Option<String>)> = result
             .arp_entries
             .iter()
-            .map(|a| (IpAddr::V4(a.ip), a))
+            .map(|a| {
+                let prefix = a.mac
+                    .get(0..8)
+                    .map(|s| s.to_uppercase().replace('-', ":"));
+                (IpAddr::V4(a.ip), a, prefix)
+            })
             .collect();
 
-        for (ip1, entry1) in &arp_ips {
-            for (ip2, entry2) in &arp_ips {
-                if ip1 < ip2 {
-                    let prefix1 = entry1
-                        .mac
-                        .get(0..8)
-                        .map(|s| s.to_uppercase().replace('-', ":"));
-                    let prefix2 = entry2
-                        .mac
-                        .get(0..8)
-                        .map(|s| s.to_uppercase().replace('-', ":"));
+        for (i, (ip1, _entry1, prefix1)) in arp_entries_with_prefix.iter().enumerate() {
+            for (j, (ip2, _entry2, prefix2)) in arp_entries_with_prefix.iter().enumerate() {
+                // Avoid self-comparison and duplicate checks (check only upper triangle)
+                if i >= j {
+                    continue;
+                }
 
-                    if prefix1.as_ref().map(|s| s.as_str()) == Some("")
-                        || prefix2.as_ref().map(|s| s.as_str()) == Some("")
-                        || prefix1.as_ref().map(|s| s.starts_with("00:00:00")) == Some(true)
-                        || prefix2.as_ref().map(|s| s.starts_with("00:00:00")) == Some(true)
-                    {
-                        continue;
-                    }
+                // Check invalid prefixes
+                if prefix1.as_ref().map(|s| s.as_str()) == Some("")
+                    || prefix2.as_ref().map(|s| s.as_str()) == Some("")
+                    || prefix1.as_ref().map(|s| s.starts_with("00:00:00")) == Some(true)
+                    || prefix2.as_ref().map(|s| s.starts_with("00:00:00")) == Some(true)
+                {
+                    continue;
+                }
 
-                    if prefix1 == prefix2 {
-                        self.add_edge(
-                            *ip1,
-                            *ip2,
-                            EdgeData {
-                                connection_type: ConnectionType::LocalSubnet,
-                                latency_ms: None,
-                                hop_count: None,
-                                bandwidth_estimate: None,
-                            },
-                        );
-                    }
+                if prefix1 == prefix2 {
+                    self.add_edge(
+                        *ip1,
+                        *ip2,
+                        EdgeData {
+                            connection_type: ConnectionType::LocalSubnet,
+                            latency_ms: None,
+                            hop_count: None,
+                            bandwidth_estimate: None,
+                        },
+                    );
                 }
             }
         }
@@ -263,8 +264,8 @@ impl Default for TopologyGraphBuilder {
     }
 }
 
-fn lookup_oui_vendor(_oui_prefix: &str) -> Option<String> {
-    None
+fn lookup_oui_vendor(mac: &str) -> Option<String> {
+    crate::oui::lookup_vendor(mac)
 }
 
 fn is_private_ip(ip: &IpAddr) -> bool {
@@ -317,8 +318,9 @@ pub async fn discover_and_build_fast(
     max_concurrent: usize,
     timeout_ms: u64,
     cancel_flag: Arc<AtomicBool>,
+    on_progress: Option<Arc<dyn Fn(f32) + Send + Sync>>,
 ) -> TopologyGraph {
-    let result = discovery::discover_network_fast(subnet, max_concurrent, timeout_ms, cancel_flag.clone()).await;
+    let result = discovery::discover_network_fast(subnet, max_concurrent, timeout_ms, cancel_flag.clone(), on_progress).await;
 
     let device_classifier = DeviceClassification::new();
     let mut builder = TopologyGraphBuilder::new();

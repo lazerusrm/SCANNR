@@ -1,11 +1,13 @@
 //! GUI entry point for SCANNR
 
 // Configure Windows to not show console
-#![cfg_attr(windows, windows_subsystem = "windows")]
+// #![cfg_attr(windows, windows_subsystem = "windows")]
 
 use SCANNR::gui::ScannrApp;
 
 fn main() -> eframe::Result<()> {
+    env_logger::init();
+
     // Configure eframe options
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()

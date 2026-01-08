@@ -68,8 +68,12 @@ impl Scanner {
 
     /// Runs scan_range with chunk sizes
     /// If you want to run RustScan normally, this is the entry point used
-    /// Returns all open ports as `Vec<u16>`
-    pub async fn run(&self, on_progress: Option<std::sync::Arc<dyn Fn(f32) + Send + Sync>>) -> Vec<SocketAddr> {
+    /// Returns all open ports as `Vec<SocketAddr>`
+    pub async fn run(
+        &self,
+        on_progress: Option<std::sync::Arc<dyn Fn(f32) + Send + Sync>>,
+        on_result: Option<std::sync::Arc<dyn Fn(SocketAddr) + Send + Sync>>,
+    ) -> Vec<SocketAddr> {
         let ports: Vec<u16> = self
             .port_strategy
             .order()
@@ -88,7 +92,7 @@ impl Scanner {
 
         for _ in 0..self.batch_size {
             if let Some(socket) = socket_iterator.next() {
-                ftrs.push(self.scan_socket(socket, udp_map.clone()));
+                ftrs.push(self.scan_socket(socket, udp_map));
             } else {
                 break;
             }
@@ -102,11 +106,16 @@ impl Scanner {
 
         while let Some(result) = ftrs.next().await {
             if let Some(socket) = socket_iterator.next() {
-                ftrs.push(self.scan_socket(socket, udp_map.clone()));
+                ftrs.push(self.scan_socket(socket, udp_map));
             }
 
             match result {
-                Ok(socket) => open_sockets.push(socket),
+                Ok(socket) => {
+                    open_sockets.push(socket);
+                    if let Some(ref result_cb) = on_result {
+                        result_cb(socket);
+                    }
+                }
                 Err(e) => {
                     let error_string = e.to_string();
                     if errors.len() < self.ips.len() * 1000 {
@@ -151,7 +160,7 @@ impl Scanner {
     async fn scan_socket(
         &self,
         socket: SocketAddr,
-        udp_map: BTreeMap<Vec<u16>, Vec<u8>>,
+        udp_map: &BTreeMap<Vec<u16>, Vec<u8>>,
     ) -> io::Result<SocketAddr> {
         if self.udp {
             return self.scan_udp_socket(socket, udp_map).await;
@@ -192,12 +201,12 @@ impl Scanner {
     async fn scan_udp_socket(
         &self,
         socket: SocketAddr,
-        udp_map: BTreeMap<Vec<u16>, Vec<u8>>,
+        udp_map: &BTreeMap<Vec<u16>, Vec<u8>>,
     ) -> io::Result<SocketAddr> {
         let mut payload: Vec<u8> = Vec::new();
         for (key, value) in udp_map {
             if key.contains(&socket.port()) {
-                payload = value;
+                payload = value.clone();
             }
         }
 
@@ -351,7 +360,7 @@ mod tests {
             vec![9000],
             false,
         );
-        block_on(scanner.run(None));
+        block_on(scanner.run(None, None));
         // if the scan fails, it wouldn't be able to assert_eq! as it panicked!
         assert_eq!(1, 1);
     }
@@ -375,7 +384,7 @@ mod tests {
             vec![9000],
             false,
         );
-        block_on(scanner.run(None));
+        block_on(scanner.run(None, None));
         // if the scan fails, it wouldn't be able to assert_eq! as it panicked!
         assert_eq!(1, 1);
     }
@@ -398,7 +407,7 @@ mod tests {
             vec![9000],
             false,
         );
-        block_on(scanner.run(None));
+        block_on(scanner.run(None, None));
         assert_eq!(1, 1);
     }
     #[test]
@@ -420,7 +429,7 @@ mod tests {
             vec![9000],
             false,
         );
-        block_on(scanner.run(None));
+        block_on(scanner.run(None, None));
         assert_eq!(1, 1);
     }
     #[test]
@@ -445,7 +454,7 @@ mod tests {
             vec![9000],
             false,
         );
-        block_on(scanner.run(None));
+        block_on(scanner.run(None, None));
         assert_eq!(1, 1);
     }
 
@@ -469,7 +478,7 @@ mod tests {
             vec![9000],
             true,
         );
-        block_on(scanner.run(None));
+        block_on(scanner.run(None, None));
         // if the scan fails, it wouldn't be able to assert_eq! as it panicked!
         assert_eq!(1, 1);
     }
@@ -493,7 +502,7 @@ mod tests {
             vec![9000],
             true,
         );
-        block_on(scanner.run(None));
+        block_on(scanner.run(None, None));
         // if the scan fails, it wouldn't be able to assert_eq! as it panicked!
         assert_eq!(1, 1);
     }
@@ -516,7 +525,7 @@ mod tests {
             vec![9000],
             true,
         );
-        block_on(scanner.run(None));
+        block_on(scanner.run(None, None));
         assert_eq!(1, 1);
     }
     #[test]
@@ -538,7 +547,7 @@ mod tests {
             vec![9000],
             true,
         );
-        block_on(scanner.run(None));
+        block_on(scanner.run(None, None));
         assert_eq!(1, 1);
     }
 }
