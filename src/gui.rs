@@ -249,7 +249,7 @@ const QUICK_PORTS: [u16; 15] = [
 ];
 
 // Standard port list - extended for IoT/network devices
-const STANDARD_PORTS: [u16; 49] = [
+const STANDARD_PORTS: [u16; 55] = [
     // Standard services
     21, 22, 23, 25, 53, 80, 110, 143, 443, 993, 995, 3389, // IP Cameras
     81, 88, 554, 8000, 8554, 9000, 10554, // Network equipment
@@ -258,7 +258,8 @@ const STANDARD_PORTS: [u16; 49] = [
     1883, 502, 5683, 47808, 623, // NAS/Storage
     139, 445, 2049, 5000, // Management
     5900, 62078, 8443, 8883, 1900, // Additional common
-    5555, 5080, 5300, 5200, 10000,
+    5555, 5080, 5300, 5200, 10000, // Databases & Cache
+    1433, 1521, 3306, 5432, 6379, 27017,
 ];
 
 fn detect_device_type(ports: &[u16]) -> String {
@@ -1093,6 +1094,63 @@ async fn run_scan(
         }
         ctx.request_repaint();
 
+        // Create callbacks for all scan phases
+        let state_clone = state.clone();
+        let ctx_clone = ctx.clone();
+
+        // Progress should be split between discovery, phase 1 and phase 2
+        let on_progress = std::sync::Arc::new(move |progress: f32| {
+            if let Ok(mut guard) = state_clone.lock() {
+                let status = guard.scan_status.clone();
+                if status.contains("Discovering active hosts") {
+                    guard.scan_progress = progress * 0.1;
+                } else if status.contains("Quick probing") {
+                    guard.scan_progress = 0.1 + (progress * 0.2);
+                } else if status.contains("Scanning remaining") {
+                    guard.scan_progress = 0.3 + (progress * 0.7);
+                }
+            }
+            ctx_clone.request_repaint();
+        });
+
+        let state_result_clone = state.clone();
+        let ctx_result_clone = ctx.clone();
+        let on_result = std::sync::Arc::new(move |socket: std::net::SocketAddr| {
+            if let Ok(mut guard) = state_result_clone.lock() {
+                let ip = socket.ip();
+                let port = socket.port();
+
+                // Find existing host or create new one
+                let mut is_new_port = false;
+                if let Some(host) = guard.results.iter_mut().find(|h| h.ip == ip) {
+                    if !host.ports.contains(&port) {
+                        host.ports.push(port);
+                        host.ports.sort_unstable();
+                        host.os = Some(detect_device_type(&host.ports));
+                        is_new_port = true;
+                    }
+                } else {
+                    let mut host = HostInfo {
+                        ip,
+                        hostname: None,
+                        mac: None,
+                        vendor: None,
+                        ports: vec![port],
+                        os: None,
+                        service_names: HashMap::new(),
+                    };
+                    host.os = Some(detect_device_type(&host.ports));
+                    guard.results.push(host);
+                    is_new_port = true;
+                }
+
+                if is_new_port {
+                    guard.scanned_ports += 1;
+                }
+            }
+            ctx_result_clone.request_repaint();
+        });
+
         // Phase 0.5: Active Host Discovery (TCP Ping Sweep)
         // We probe a common port on EVERY IP to ensure the OS populates the ARP table
         // and we find hosts not in the cache.
@@ -1138,7 +1196,9 @@ async fn run_scan(
             }
         });
 
-        discovery_scanner.run(Some(on_progress.clone()), Some(on_discovery_result)).await;
+        discovery_scanner
+            .run(Some(on_progress.clone()), Some(on_discovery_result))
+            .await;
 
         // Refresh ARP after discovery probe
         let arp_entries = crate::topology::discovery::get_arp_entries().await;
@@ -1155,64 +1215,6 @@ async fn run_scan(
             }
         }
         ctx.request_repaint();
-
-        // Create callbacks for main scan phases
-        let state_clone = state.clone();
-        let ctx_clone = ctx.clone();
-
-        // Progress should be split between discovery, phase 1 and phase 2
-        let on_progress = std::sync::Arc::new(move |progress: f32| {
-            if let Ok(mut guard) = state_clone.lock() {
-                let status = guard.scan_status.clone();
-                if status.contains("Discovering active hosts") {
-                    guard.scan_progress = progress * 0.1;
-                } else if status.contains("Quick probing") {
-                    guard.scan_progress = 0.1 + (progress * 0.2);
-                } else if status.contains("Scanning remaining") {
-                    guard.scan_progress = 0.3 + (progress * 0.7);
-                }
-            }
-            ctx_clone.request_repaint();
-        });
-
-        // Create result callback for real-time updates
-        let state_result_clone = state.clone();
-        let ctx_result_clone = ctx.clone();
-        let on_result = std::sync::Arc::new(move |socket: std::net::SocketAddr| {
-            if let Ok(mut guard) = state_result_clone.lock() {
-                let ip = socket.ip();
-                let port = socket.port();
-
-                // Find existing host or create new one
-                let mut is_new_port = false;
-                if let Some(host) = guard.results.iter_mut().find(|h| h.ip == ip) {
-                    if !host.ports.contains(&port) {
-                        host.ports.push(port);
-                        host.ports.sort_unstable();
-                        host.os = Some(detect_device_type(&host.ports));
-                        is_new_port = true;
-                    }
-                } else {
-                    let mut host = HostInfo {
-                        ip,
-                        hostname: None,
-                        mac: None,
-                        vendor: None,
-                        ports: vec![port],
-                        os: None,
-                        service_names: HashMap::new(),
-                    };
-                    host.os = Some(detect_device_type(&host.ports));
-                    guard.results.push(host);
-                    is_new_port = true;
-                }
-
-                if is_new_port {
-                    guard.scanned_ports += 1;
-                }
-            }
-            ctx_result_clone.request_repaint();
-        });
         // Phase 1: Quick Scan (Common ports)
         let quick_ports = QUICK_PORTS.to_vec();
         let quick_strategy =
@@ -1235,7 +1237,9 @@ async fn run_scan(
         }
         ctx.request_repaint();
 
-        quick_scanner.run(Some(on_progress.clone()), Some(on_result.clone())).await;
+        quick_scanner
+            .run(Some(on_progress.clone()), Some(on_result.clone()))
+            .await;
 
         // Phase 2: Main Scan (Remaining ports)
         let remaining_ports: Vec<u16> = ports

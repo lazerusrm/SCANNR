@@ -126,8 +126,8 @@ impl Scanner {
 
             finished_scans += 1.0;
             if let Some(ref progress_cb) = on_progress {
-                // Update progress every 50 scans to avoid excessive locking/channel overhead
-                if (finished_scans as usize) % 50 == 0 {
+                // Update progress every 10 scans for smoother GUI feedback
+                if (finished_scans as usize) % 10 == 0 {
                     progress_cb(finished_scans / total_scans);
                 }
             }
