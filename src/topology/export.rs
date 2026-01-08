@@ -541,7 +541,7 @@ mod tests {
 
             let idx = graph.add_node(node_data);
             ip_to_node.insert(std::net::IpAddr::V4(ip), idx);
-            positions.insert(idx, Vec2::new((i as f32 * 100.0), i as f32 * 50.0));
+            positions.insert(idx, Vec2::new(i as f32 * 100.0, i as f32 * 50.0));
         }
 
         if let (Some(&n0), Some(&n1)) = (

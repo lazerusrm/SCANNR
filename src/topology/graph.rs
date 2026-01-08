@@ -97,7 +97,7 @@ impl TopologyGraphBuilder {
         let internet_data = NodeData {
             ip: internet_ip,
             mac: None,
-            hostname: Some("Internet".to_string()),
+            hostname: Some("External Internet".to_string()),
             vendor: None,
             device_type: DeviceType::Internet,
             os_fingerprint: None,

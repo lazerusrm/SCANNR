@@ -33,11 +33,9 @@ impl LODLevel {
             else if effective_zoom < 0.7 { LODLevel::Medium }
             else if effective_zoom < 1.5 { LODLevel::High }
             else { LODLevel::Full }
-        } else {
-            if effective_zoom < 0.4 { LODLevel::Medium }
+        } else if effective_zoom < 0.4 { LODLevel::Medium }
             else if effective_zoom < 1.0 { LODLevel::High }
             else { LODLevel::Full }
-        }
     }
 
     pub fn show_labels(&self) -> bool {
@@ -174,7 +172,7 @@ impl TopologyRenderer {
         let mut painter = ui.painter_at(viewport_rect);
 
         // Clip drawing to the viewport
-        let _clip_id = painter.set_layer_id(ui.layer_id());
+        painter.set_layer_id(ui.layer_id());
         
         // Draw background
         painter.rect_filled(viewport_rect, 0.0, self.config.background_color);

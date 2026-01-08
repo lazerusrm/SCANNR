@@ -597,7 +597,7 @@ mod tests {
 
         assert_eq!(positions.len(), 4);
 
-        for (idx, pos) in &positions {
+        for (_idx, pos) in &positions {
             assert!(!pos.x.is_nan());
             assert!(!pos.y.is_nan());
             assert!(pos.x.is_finite());

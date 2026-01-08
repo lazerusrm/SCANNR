@@ -188,7 +188,7 @@ impl TopologyWidget {
         let found = self.renderer.graph.graph.node_weights()
             .find(|n| {
                 n.ip.to_string().contains(&query) || 
-                n.hostname.as_ref().map_or(false, |h| h.to_lowercase().contains(&query))
+                n.hostname.as_ref().is_some_and(|h| h.to_lowercase().contains(&query))
             });
 
         if let Some(node) = found {
