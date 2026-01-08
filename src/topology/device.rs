@@ -37,6 +37,7 @@ pub enum DeviceType {
     Storage,
     UPS,
     KVM,
+    Internet,
     Unknown,
 }
 

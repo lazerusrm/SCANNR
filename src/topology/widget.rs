@@ -128,16 +128,35 @@ impl TopologyWidget {
                 
                 if let Some(geo) = &node.geo_location {
                     ui.add_space(15.0);
-                    ui.label(RichText::new("Location").underline());
-                    if let (Some(city), Some(country)) = (&geo.city, &geo.country) {
-                        ui.label(format!("{}, {}", city, country));
-                    }
+                    ui.label(RichText::new("Geolocation").underline().color(Color32::WHITE));
+                    ui.add_space(5.0);
+                    egui::Grid::new("geo_details_grid")
+                        .num_columns(2)
+                        .spacing([10.0, 4.0])
+                        .show(ui, |ui| {
+                            if let Some(country) = &geo.country {
+                                ui.label(RichText::new("Country:").weak());
+                                ui.label(country);
+                                ui.end_row();
+                            }
+                            if let Some(city) = &geo.city {
+                                ui.label(RichText::new("City:").weak());
+                                ui.label(city);
+                                ui.end_row();
+                            }
+                            if let (Some(lat), Some(lon)) = (geo.latitude, geo.longitude) {
+                                ui.label(RichText::new("Coords:").weak());
+                                ui.label(format!("{:.4}, {:.4}", lat, lon));
+                                ui.end_row();
+                            }
+                        });
                 }
             });
     }
 
     fn get_type_color(&self, device_type: crate::topology::DeviceType) -> Color32 {
         match device_type {
+            crate::topology::DeviceType::Internet => Color32::from_rgb(255, 215, 0),
             crate::topology::DeviceType::Router => Color32::from_rgb(46, 204, 113),
             crate::topology::DeviceType::Server => Color32::from_rgb(52, 152, 219),
             crate::topology::DeviceType::Firewall => Color32::from_rgb(231, 76, 60),

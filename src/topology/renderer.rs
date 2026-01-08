@@ -319,20 +319,28 @@ impl TopologyRenderer {
             let Some(&world_pos) = self.positions.get(&node_idx) else { continue };
             let screen_pos = self.world_to_screen(world_pos, viewport_rect, view_state);
 
-            let radius = base_radius * view_state.zoom.sqrt();
+            let node_data = &self.graph.graph[node_idx];
+            let is_internet = node_data.device_type == DeviceType::Internet;
+            
+            let mut radius = base_radius * view_state.zoom.sqrt();
+            if is_internet {
+                radius *= 1.5;
+            }
+
             if !viewport_rect.intersects(Rect::from_center_size(screen_pos, EguiVec2::splat(radius * 4.0))) {
                 continue;
             }
 
-            let node_data = &self.graph.graph[node_idx];
             let is_selected = view_state.selected_node.as_ref().is_some_and(|id| id.0 == node_data.ip);
             let is_hovered = view_state.hovered_node.as_ref().is_some_and(|id| id.0 == node_data.ip);
 
             let fill_color = self.get_device_color(node_data.device_type);
             
-            // Glow effect for selected/hovered
-            if is_selected || is_hovered {
-                let glow_color = if is_selected { self.config.selected_node_color } else { self.config.hovered_node_color };
+            // Glow effect for selected/hovered or Internet
+            if is_selected || is_hovered || is_internet {
+                let glow_color = if is_selected { self.config.selected_node_color } 
+                                else if is_hovered { self.config.hovered_node_color }
+                                else { fill_color };
                 painter.circle_filled(screen_pos, radius * 1.5, glow_color.gamma_multiply(0.2));
             }
 
@@ -460,6 +468,7 @@ impl TopologyRenderer {
 
     fn get_device_color(&self, device_type: DeviceType) -> Color32 {
         match device_type {
+            DeviceType::Internet => Color32::from_rgb(255, 215, 0), // Gold
             DeviceType::Router => Color32::from_rgb(46, 204, 113),
             DeviceType::Server => Color32::from_rgb(52, 152, 219),
             DeviceType::Firewall => Color32::from_rgb(231, 76, 60),
@@ -470,10 +479,19 @@ impl TopologyRenderer {
     }
 
     fn get_node_label(&self, node_data: &NodeData, lod: LODLevel) -> String {
-        match lod {
+        let mut base = match lod {
             LODLevel::Minimal | LODLevel::Low => String::new(),
             LODLevel::Medium => node_data.ip.to_string(),
             _ => node_data.hostname.as_ref().cloned().unwrap_or_else(|| node_data.ip.to_string()),
+        };
+
+        if !base.is_empty() {
+            if let Some(ref geo) = node_data.geo_location {
+                if let Some(ref country) = geo.country {
+                    base = format!("{} [{}]", base, country);
+                }
+            }
         }
+        base
     }
 }

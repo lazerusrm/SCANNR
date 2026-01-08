@@ -91,6 +91,24 @@ impl TopologyGraphBuilder {
         device_classifier: &DeviceClassification,
     ) {
         let mut mac_cache: HashMap<String, String> = HashMap::new();
+        
+        // Create Internet node first
+        let internet_ip = "0.0.0.0".parse::<IpAddr>().unwrap();
+        let internet_data = NodeData {
+            ip: internet_ip,
+            mac: None,
+            hostname: Some("Internet".to_string()),
+            vendor: None,
+            device_type: DeviceType::Internet,
+            os_fingerprint: None,
+            ports: Vec::new(),
+            risk_score: 0,
+            geo_location: None,
+            traceroute_hops: Vec::new(),
+            first_seen: SystemTime::now(),
+            last_seen: SystemTime::now(),
+        };
+        let internet_node_idx = self.add_node(internet_ip, internet_data);
 
         for arp in &result.arp_entries {
             if let Some(mac) = self.lookup_vendor(&arp.mac, &mut mac_cache) {
@@ -115,23 +133,28 @@ impl TopologyGraphBuilder {
         for (ip, host) in &result.probed_hosts {
             let mac = if let Some(mac_str) = &host.mac {
                 Some(mac_str.clone())
-                            } else {
-                                result.arp_entries.iter().find(|a| a.ip == *ip).map(|arp_entry| arp_entry.mac.clone())
-                            };
-                        let vendor = mac.as_ref().and_then(|m| {
+            } else {
+                result.arp_entries.iter().find(|a| a.ip == *ip).map(|arp_entry| arp_entry.mac.clone())
+            };
+            let vendor = mac.as_ref().and_then(|m| {
                 self.lookup_vendor(m, &mut mac_cache)
             });
 
             let hostname = host.hostname.clone();
             let os_family = host.os_info.as_ref().map(|info| info.os_family.as_str());
 
-            let (device_type, _confidence) = device_classifier.classify(
+            let (mut device_type, _confidence) = device_classifier.classify(
                 &host.ports,
                 hostname.as_deref(),
                 os_family,
                 host.is_gateway,
                 is_private_ip(ip),
             );
+
+            // Double check if it's a gateway
+            if device_type == DeviceType::Unknown && host.is_gateway {
+                device_type = DeviceType::Router;
+            }
 
             let geo = geo_lookup(*ip);
 
@@ -166,14 +189,54 @@ impl TopologyGraphBuilder {
                 last_seen: SystemTime::UNIX_EPOCH,
             };
 
-            self.add_node(*ip, node_data);
+            let node_idx = self.add_node(*ip, node_data);
+            
+            // If it's a gateway, connect it to the internet
+            if host.is_gateway || device_type == DeviceType::Router || device_type == DeviceType::Firewall {
+                self.graph.add_edge(internet_node_idx, node_idx, EdgeData {
+                    connection_type: ConnectionType::Inferred,
+                    latency_ms: None,
+                    hop_count: None,
+                    bandwidth_estimate: None,
+                });
+            }
         }
 
         for traceroute in &result.traceroutes {
             let mut previous_ip: Option<IpAddr> = None;
+            let mut connected_to_internet = false;
 
             for hop in &traceroute.hops {
                 if let Some(ip) = hop.ip {
+                    let is_private = is_private_ip(&ip);
+                    
+                    // If we encounter a public IP, connect the internet node to the first public IP if not already connected
+                    if !is_private && !connected_to_internet {
+                        let geo = geo_lookup(ip);
+                        let node_data = NodeData {
+                            ip,
+                            mac: None,
+                            hostname: hop.hostname.clone(),
+                            vendor: None,
+                            device_type: DeviceType::Unknown,
+                            os_fingerprint: None,
+                            ports: Vec::new(),
+                            risk_score: 0,
+                            geo_location: if geo.country.is_some() { Some(geo) } else { None },
+                            traceroute_hops: Vec::new(),
+                            first_seen: SystemTime::now(),
+                            last_seen: SystemTime::now(),
+                        };
+                        let hop_node_idx = self.add_node(ip, node_data);
+                        self.graph.add_edge(internet_node_idx, hop_node_idx, EdgeData {
+                            connection_type: ConnectionType::TracerouteHop,
+                            latency_ms: hop.latency_us.map(|us| (us / 1000) as u32),
+                            hop_count: Some(1),
+                            bandwidth_estimate: None,
+                        });
+                        connected_to_internet = true;
+                    }
+
                     if let Some(prev) = previous_ip {
                         if prev != ip {
                             self.add_edge(

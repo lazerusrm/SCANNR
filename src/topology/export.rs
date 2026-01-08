@@ -457,6 +457,7 @@ impl Exporter {
             DeviceType::Storage => "#3F51B5".to_string(),
             DeviceType::UPS => "#795548".to_string(),
             DeviceType::KVM => "#795548".to_string(),
+            DeviceType::Internet => "#FFD700".to_string(), // Gold
             DeviceType::Unknown => "#9E9E9E".to_string(),
         }
     }
