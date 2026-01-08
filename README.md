@@ -3,7 +3,7 @@
 # SCANNR
 ### The Modern GUI for RustScan
 
-**Fast, smart, visual.**
+**Fast & Efficient.**
 
 ![Built with Rust](https://img.shields.io/badge/Built%20with-Rust-Purple)
 ![License](https://img.shields.io/badge/License-GPL--3.0-blue)
