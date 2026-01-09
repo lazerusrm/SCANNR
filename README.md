@@ -74,5 +74,5 @@ The original RustScan code remains the property of its respective owners and is 
 
 ---
 <div align="center">
-  Built with passion for the security community.
+  Made with love, SCANNR Responsibly.
 </div>
