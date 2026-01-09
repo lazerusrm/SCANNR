@@ -101,11 +101,7 @@ impl Exporter {
                 String::new()
             };
 
-            output.push_str(&format!(
-                "  \"{}\" -> \"{}\" [\n",
-                src_data.ip,
-                dst_data.ip
-            ));
+            output.push_str(&format!("  \"{}\" -> \"{}\" [\n", src_data.ip, dst_data.ip));
             output.push_str(&format!("    label=\"{}\";\n", label));
 
             let edge_color = Self::get_edge_color(edge_data.connection_type);

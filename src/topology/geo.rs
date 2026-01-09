@@ -18,7 +18,6 @@ pub struct GeoInfo {
     pub accuracy_radius: Option<u32>,
 }
 
-
 fn get_english_name(names: &maxminddb::geoip2::Names) -> Option<String> {
     names
         .english

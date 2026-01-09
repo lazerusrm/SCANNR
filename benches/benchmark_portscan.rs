@@ -1,10 +1,10 @@
 use async_std::task::block_on;
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use rustscan::input::{PortRange, ScanOrder};
-use rustscan::port_strategy::PortStrategy;
-use rustscan::scanner::Scanner;
 use std::net::IpAddr;
 use std::time::Duration;
+use SCANNR::input::{PortRange, ScanOrder};
+use SCANNR::port_strategy::PortStrategy;
+use SCANNR::scanner::Scanner;
 
 fn portscan_tcp(scanner: &Scanner) {
     let _scan_result = block_on(scanner.run());

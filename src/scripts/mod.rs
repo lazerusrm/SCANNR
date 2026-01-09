@@ -496,7 +496,16 @@ mod tests {
 
     #[test]
     fn run_python_script() {
-        let script_f = ScriptFile::new("fixtures/.rustscan_scripts/test_script.py".into()).unwrap();
+        let mut script_f =
+            ScriptFile::new("fixtures/.rustscan_scripts/test_script.py".into()).unwrap();
+
+        #[cfg(windows)]
+        {
+            if let Some(ref mut format) = script_f.call_format {
+                *format = format.replace("python3", "python");
+            }
+        }
+
         let script: Script = into_script(script_f);
         let output = script.run().unwrap();
         // output has a newline at the end by default, .trim() trims it

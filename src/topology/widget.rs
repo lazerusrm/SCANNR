@@ -1,6 +1,6 @@
+use crate::topology::renderer::TopologyRenderer;
 use crate::topology::{NodeData, TopologyGraph, TopologyViewState};
-use crate::topology::renderer::{TopologyRenderer};
-use egui::{Rect, Ui, Layout, Align, Color32, RichText};
+use egui::{Align, Color32, Layout, Rect, RichText, Ui};
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum LayoutType {
@@ -28,12 +28,17 @@ impl TopologyWidget {
 
     pub fn show(&mut self, ui: &mut Ui, viewport_rect: Rect) {
         // Main rendering area
-        self.renderer.render(ui, viewport_rect, &mut self.view_state);
+        self.renderer
+            .render(ui, viewport_rect, &mut self.view_state);
 
         // Selection details panel (overlay on the right)
         if let Some(selected_id) = &self.view_state.selected_node {
             // Find node data
-            let node_data = self.renderer.graph.graph.node_weights()
+            let node_data = self
+                .renderer
+                .graph
+                .graph
+                .node_weights()
                 .find(|n| n.ip == selected_id.0);
 
             if let Some(node) = node_data {
@@ -45,14 +50,14 @@ impl TopologyWidget {
     fn draw_details_panel(&self, ui: &mut Ui, viewport_rect: Rect, node: &NodeData) {
         let panel_width = 280.0;
         let margin = 15.0;
-        
+
         let panel_rect = Rect::from_min_max(
             viewport_rect.right_top() + egui::vec2(-panel_width - margin, margin),
             viewport_rect.right_bottom() + egui::vec2(-margin, -margin),
         );
 
         let mut ui = ui.child_ui(panel_rect, Layout::top_down(Align::Min));
-        
+
         egui::Frame::none()
             .fill(Color32::from_black_alpha(220))
             .stroke(egui::Stroke::new(1.0, Color32::from_gray(80)))
@@ -60,15 +65,15 @@ impl TopologyWidget {
             .inner_margin(12.0)
             .show(&mut ui, |ui| {
                 ui.set_width(panel_width - 24.0);
-                
+
                 ui.horizontal(|ui| {
                     ui.heading(RichText::new("Node Details").strong().color(Color32::WHITE));
                 });
-                
+
                 ui.add_space(8.0);
                 ui.separator();
                 ui.add_space(8.0);
-                
+
                 egui::Grid::new("node_details_grid")
                     .num_columns(2)
                     .spacing([10.0, 8.0])
@@ -76,13 +81,13 @@ impl TopologyWidget {
                         ui.label(RichText::new("IP:").weak());
                         ui.label(RichText::new(node.ip.to_string()).strong());
                         ui.end_row();
-                        
+
                         if let Some(host) = &node.hostname {
                             ui.label(RichText::new("Host:").weak());
                             ui.label(host);
                             ui.end_row();
                         }
-                        
+
                         if let Some(mac) = &node.mac {
                             ui.label(RichText::new("MAC:").weak());
                             ui.label(mac);
@@ -94,17 +99,26 @@ impl TopologyWidget {
                             ui.label(vendor);
                             ui.end_row();
                         }
-                        
+
                         ui.label(RichText::new("Type:").weak());
-                        ui.colored_label(self.get_type_color(node.device_type), format!("{:?}", node.device_type));
+                        ui.colored_label(
+                            self.get_type_color(node.device_type),
+                            format!("{:?}", node.device_type),
+                        );
                         ui.end_row();
                     });
-                
+
                 ui.add_space(15.0);
                 ui.label(RichText::new(format!("Risk Score: {}", node.risk_score)).strong());
-                let risk_color = if node.risk_score > 70 { Color32::RED } else if node.risk_score > 30 { Color32::GOLD } else { Color32::GREEN };
+                let risk_color = if node.risk_score > 70 {
+                    Color32::RED
+                } else if node.risk_score > 30 {
+                    Color32::GOLD
+                } else {
+                    Color32::GREEN
+                };
                 ui.add(egui::ProgressBar::new(node.risk_score as f32 / 100.0).fill(risk_color));
-                
+
                 if !node.ports.is_empty() {
                     ui.add_space(15.0);
                     ui.label(RichText::new("Open Ports").underline());
@@ -115,8 +129,15 @@ impl TopologyWidget {
                         .show(ui, |ui| {
                             for port in &node.ports {
                                 ui.horizontal(|ui| {
-                                    ui.label(RichText::new(port.port.to_string()).color(Color32::from_rgb(100, 255, 100)));
-                                    ui.label(RichText::new(format!("/{:?}", port.protocol)).small().weak());
+                                    ui.label(
+                                        RichText::new(port.port.to_string())
+                                            .color(Color32::from_rgb(100, 255, 100)),
+                                    );
+                                    ui.label(
+                                        RichText::new(format!("/{:?}", port.protocol))
+                                            .small()
+                                            .weak(),
+                                    );
                                     if let Some(service) = &port.service {
                                         ui.add_space(5.0);
                                         ui.label(service);
@@ -125,10 +146,14 @@ impl TopologyWidget {
                             }
                         });
                 }
-                
+
                 if let Some(geo) = &node.geo_location {
                     ui.add_space(15.0);
-                    ui.label(RichText::new("Geolocation").underline().color(Color32::WHITE));
+                    ui.label(
+                        RichText::new("Geolocation")
+                            .underline()
+                            .color(Color32::WHITE),
+                    );
                     ui.add_space(5.0);
                     egui::Grid::new("geo_details_grid")
                         .num_columns(2)
@@ -185,11 +210,12 @@ impl TopologyWidget {
         }
 
         let query = query.to_lowercase();
-        let found = self.renderer.graph.graph.node_weights()
-            .find(|n| {
-                n.ip.to_string().contains(&query) || 
-                n.hostname.as_ref().is_some_and(|h| h.to_lowercase().contains(&query))
-            });
+        let found = self.renderer.graph.graph.node_weights().find(|n| {
+            n.ip.to_string().contains(&query)
+                || n.hostname
+                    .as_ref()
+                    .is_some_and(|h| h.to_lowercase().contains(&query))
+        });
 
         if let Some(node) = found {
             self.view_state.selected_node = Some(crate::topology::NodeId(node.ip));

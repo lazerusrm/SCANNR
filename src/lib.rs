@@ -58,10 +58,12 @@ pub mod scripts;
 #[allow(non_snake_case)]
 pub mod address;
 
+#[rustfmt::skip]
 pub mod generated;
 
 pub mod gui;
 
+#[rustfmt::skip]
 pub mod oui;
 
 pub mod topology;

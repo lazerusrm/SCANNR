@@ -73,7 +73,10 @@ pub struct Hop {
     pub is_timeout: bool,
 }
 
-const COMMON_PORTS: [u16; 20] = [21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 1723, 3306, 3389, 5432, 5900, 8080, 8443, 27017];
+const COMMON_PORTS: [u16; 20] = [
+    21, 22, 23, 25, 53, 80, 110, 143, 443, 445, 993, 995, 1723, 3306, 3389, 5432, 5900, 8080, 8443,
+    27017,
+];
 
 pub async fn get_arp_entries() -> Vec<ArpEntry> {
     let mut entries = Vec::new();
@@ -222,7 +225,11 @@ async fn perform_hop(target: IpAddr, _ttl: u8, timeout_duration: Duration) -> Ho
     }
 }
 
-async fn perform_ipv4_hop(target: Ipv4Addr, timeout_duration: Duration, start_time: Instant) -> Hop {
+async fn perform_ipv4_hop(
+    target: Ipv4Addr,
+    timeout_duration: Duration,
+    start_time: Instant,
+) -> Hop {
     let socket = UdpSocket::bind("0.0.0.0:0").await.unwrap();
 
     let timeout_result = timeout(
@@ -246,7 +253,11 @@ async fn perform_ipv4_hop(target: Ipv4Addr, timeout_duration: Duration, start_ti
     }
 }
 
-async fn perform_ipv6_hop(target: Ipv6Addr, timeout_duration: Duration, start_time: Instant) -> Hop {
+async fn perform_ipv6_hop(
+    target: Ipv6Addr,
+    timeout_duration: Duration,
+    start_time: Instant,
+) -> Hop {
     let socket = UdpSocket::bind("[::]:0").await.unwrap();
 
     let timeout_result = timeout(
@@ -358,10 +369,7 @@ pub async fn discover_network_fast(
     let mut probed_hosts = HashMap::new();
     let mut traceroutes = Vec::new();
 
-    let targets: Vec<IpAddr> = parse_subnet(subnet)
-        .into_iter()
-        .take(256)
-        .collect();
+    let targets: Vec<IpAddr> = parse_subnet(subnet).into_iter().take(256).collect();
 
     let total_targets = targets.len();
     let common_ports: Vec<u16> = COMMON_PORTS.to_vec();
@@ -398,7 +406,7 @@ pub async fn discover_network_fast(
         if let Ok(Some(host)) = handle.await {
             probed_hosts.insert(host.ip, host);
         }
-        
+
         completed_targets += 1;
         if let Some(ref cb) = on_progress {
             if total_targets > 0 {
@@ -452,7 +460,14 @@ pub async fn discover_network(
     timeout: Duration,
     cancel_flag: Arc<AtomicBool>,
 ) -> DiscoveryResult {
-    discover_network_fast(_subnet, max_concurrent, timeout.as_millis() as u64, cancel_flag, None).await
+    discover_network_fast(
+        _subnet,
+        max_concurrent,
+        timeout.as_millis() as u64,
+        cancel_flag,
+        None,
+    )
+    .await
 }
 
 fn parse_subnet(subnet: &str) -> Vec<IpAddr> {
@@ -467,7 +482,8 @@ fn parse_subnet(subnet: &str) -> Vec<IpAddr> {
                     let octets = base_ip.octets();
                     let last_octet = octets[3] as u32 + i;
                     if last_octet <= 255 {
-                        let new_ip = Ipv4Addr::new(octets[0], octets[1], octets[2], last_octet as u8);
+                        let new_ip =
+                            Ipv4Addr::new(octets[0], octets[1], octets[2], last_octet as u8);
                         targets.push(IpAddr::V4(new_ip));
                     }
                 }

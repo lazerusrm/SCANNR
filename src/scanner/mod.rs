@@ -132,7 +132,7 @@ impl Scanner {
                 }
             }
         }
-        
+
         // Ensure we hit 100% at the end
         if let Some(ref progress_cb) = on_progress {
             progress_cb(1.0);

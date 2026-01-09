@@ -21,8 +21,8 @@ use crate::warning;
 /// Goes through all possible IP inputs (files or via argparsing).
 ///
 /// ```rust
-/// # use rustscan::input::Opts;
-/// # use rustscan::address::parse_addresses;
+/// # use SCANNR::input::Opts;
+/// # use SCANNR::address::parse_addresses;
 /// let mut opts = Opts::default();
 /// opts.addresses = vec!["192.168.0.0/30".to_owned()];
 ///
@@ -93,7 +93,7 @@ pub fn parse_addresses(input: &Opts) -> Vec<IpAddr> {
 /// or resolve it by dns resolver list.
 ///
 /// ```rust
-/// # use rustscan::address::parse_address;
+/// # use SCANNR::address::parse_address;
 /// # use hickory_resolver::Resolver;
 /// let ips = parse_address("127.0.0.1", &Resolver::default().unwrap());
 /// ```

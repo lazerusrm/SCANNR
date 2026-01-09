@@ -279,12 +279,16 @@ mod tests {
             last_seen: SystemTime::UNIX_EPOCH,
         });
 
-        graph.add_edge(node1, node2, EdgeData {
-            connection_type: ConnectionType::LocalSubnet,
-            latency_ms: Some(2),
-            hop_count: Some(1),
-            bandwidth_estimate: None,
-        });
+        graph.add_edge(
+            node1,
+            node2,
+            EdgeData {
+                connection_type: ConnectionType::LocalSubnet,
+                latency_ms: Some(2),
+                hop_count: Some(1),
+                bandwidth_estimate: None,
+            },
+        );
 
         let stats = TopologyStats::from_graph(&graph);
 

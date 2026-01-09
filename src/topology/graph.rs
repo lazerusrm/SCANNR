@@ -1,11 +1,11 @@
 use crate::topology::device::DeviceClassification;
-use crate::topology::discovery::DiscoveryResult;
 use crate::topology::discovery;
+use crate::topology::discovery::DiscoveryResult;
 use crate::topology::geo::geo_lookup;
 use crate::topology::{ConnectionType, DeviceType, EdgeData, NodeData, PortInfo, TopologyStats};
+use petgraph::graph::NodeIndex;
 use petgraph::Graph;
 use petgraph::Undirected;
-use petgraph::graph::NodeIndex;
 use std::collections::HashMap;
 use std::net::IpAddr;
 use std::sync::atomic::AtomicBool;
@@ -34,10 +34,15 @@ impl TopologyGraph {
         self.graph.add_node(node_data)
     }
 
-    pub fn add_edge(&mut self, source: NodeIndex, target: NodeIndex, edge_data: EdgeData) -> Option<petgraph::graph::EdgeIndex> {
-        self.graph.find_edge(source, target).or_else(|| {
-            Some(self.graph.add_edge(source, target, edge_data))
-        })
+    pub fn add_edge(
+        &mut self,
+        source: NodeIndex,
+        target: NodeIndex,
+        edge_data: EdgeData,
+    ) -> Option<petgraph::graph::EdgeIndex> {
+        self.graph
+            .find_edge(source, target)
+            .or_else(|| Some(self.graph.add_edge(source, target, edge_data)))
     }
 
     pub fn get_node(&self, idx: NodeIndex) -> Option<&NodeData> {
@@ -79,7 +84,12 @@ impl TopologyGraphBuilder {
         idx
     }
 
-    pub fn add_edge(&mut self, source: IpAddr, target: IpAddr, edge_data: EdgeData) -> Option<petgraph::graph::EdgeIndex> {
+    pub fn add_edge(
+        &mut self,
+        source: IpAddr,
+        target: IpAddr,
+        edge_data: EdgeData,
+    ) -> Option<petgraph::graph::EdgeIndex> {
         let source_idx = self.ip_to_node.get(&source).copied()?;
         let target_idx = self.ip_to_node.get(&target).copied()?;
         self.graph.add_edge(source_idx, target_idx, edge_data)
@@ -91,7 +101,7 @@ impl TopologyGraphBuilder {
         device_classifier: &DeviceClassification,
     ) {
         let mut mac_cache: HashMap<String, String> = HashMap::new();
-        
+
         // Create Internet node first
         let internet_ip = "0.0.0.0".parse::<IpAddr>().unwrap();
         let internet_data = NodeData {
@@ -134,11 +144,15 @@ impl TopologyGraphBuilder {
             let mac = if let Some(mac_str) = &host.mac {
                 Some(mac_str.clone())
             } else {
-                result.arp_entries.iter().find(|a| a.ip == *ip).map(|arp_entry| arp_entry.mac.clone())
+                result
+                    .arp_entries
+                    .iter()
+                    .find(|a| a.ip == *ip)
+                    .map(|arp_entry| arp_entry.mac.clone())
             };
-            let vendor = mac.as_ref().and_then(|m| {
-                self.lookup_vendor(m, &mut mac_cache)
-            });
+            let vendor = mac
+                .as_ref()
+                .and_then(|m| self.lookup_vendor(m, &mut mac_cache));
 
             let hostname = host.hostname.clone();
             let os_family = host.os_info.as_ref().map(|info| info.os_family.as_str());
@@ -190,15 +204,22 @@ impl TopologyGraphBuilder {
             };
 
             let node_idx = self.add_node(*ip, node_data);
-            
+
             // If it's a gateway, connect it to the internet
-            if host.is_gateway || device_type == DeviceType::Router || device_type == DeviceType::Firewall {
-                self.graph.add_edge(internet_node_idx, node_idx, EdgeData {
-                    connection_type: ConnectionType::Inferred,
-                    latency_ms: None,
-                    hop_count: None,
-                    bandwidth_estimate: None,
-                });
+            if host.is_gateway
+                || device_type == DeviceType::Router
+                || device_type == DeviceType::Firewall
+            {
+                self.graph.add_edge(
+                    internet_node_idx,
+                    node_idx,
+                    EdgeData {
+                        connection_type: ConnectionType::Inferred,
+                        latency_ms: None,
+                        hop_count: None,
+                        bandwidth_estimate: None,
+                    },
+                );
             }
         }
 
@@ -209,7 +230,7 @@ impl TopologyGraphBuilder {
             for hop in &traceroute.hops {
                 if let Some(ip) = hop.ip {
                     let is_private = is_private_ip(&ip);
-                    
+
                     // If we encounter a public IP, connect the internet node to the first public IP if not already connected
                     if !is_private && !connected_to_internet {
                         let geo = geo_lookup(ip);
@@ -222,18 +243,26 @@ impl TopologyGraphBuilder {
                             os_fingerprint: None,
                             ports: Vec::new(),
                             risk_score: 0,
-                            geo_location: if geo.country.is_some() { Some(geo) } else { None },
+                            geo_location: if geo.country.is_some() {
+                                Some(geo)
+                            } else {
+                                None
+                            },
                             traceroute_hops: Vec::new(),
                             first_seen: SystemTime::now(),
                             last_seen: SystemTime::now(),
                         };
                         let hop_node_idx = self.add_node(ip, node_data);
-                        self.graph.add_edge(internet_node_idx, hop_node_idx, EdgeData {
-                            connection_type: ConnectionType::TracerouteHop,
-                            latency_ms: hop.latency_us.map(|us| (us / 1000) as u32),
-                            hop_count: Some(1),
-                            bandwidth_estimate: None,
-                        });
+                        self.graph.add_edge(
+                            internet_node_idx,
+                            hop_node_idx,
+                            EdgeData {
+                                connection_type: ConnectionType::TracerouteHop,
+                                latency_ms: hop.latency_us.map(|us| (us / 1000) as u32),
+                                hop_count: Some(1),
+                                bandwidth_estimate: None,
+                            },
+                        );
                         connected_to_internet = true;
                     }
 
@@ -257,13 +286,15 @@ impl TopologyGraphBuilder {
         }
 
         // Pre-calculate MAC prefixes to avoid repeated string manipulation in O(N^2) loop
-        let arp_entries_with_prefix: Vec<(IpAddr, &crate::topology::discovery::ArpEntry, Option<String>)> = result
+        let arp_entries_with_prefix: Vec<(
+            IpAddr,
+            &crate::topology::discovery::ArpEntry,
+            Option<String>,
+        )> = result
             .arp_entries
             .iter()
             .map(|a| {
-                let prefix = a.mac
-                    .get(0..8)
-                    .map(|s| s.to_uppercase().replace('-', ":"));
+                let prefix = a.mac.get(0..8).map(|s| s.to_uppercase().replace('-', ":"));
                 (IpAddr::V4(a.ip), a, prefix)
             })
             .collect();
@@ -300,15 +331,8 @@ impl TopologyGraphBuilder {
         }
     }
 
-    fn lookup_vendor(
-        &self,
-        mac: &str,
-        cache: &mut HashMap<String, String>,
-    ) -> Option<String> {
-        let prefix = mac
-            .get(0..8)?
-            .to_uppercase()
-            .replace('-', ":");
+    fn lookup_vendor(&self, mac: &str, cache: &mut HashMap<String, String>) -> Option<String> {
+        let prefix = mac.get(0..8)?.to_uppercase().replace('-', ":");
 
         if let Some(cached) = cache.get(&prefix) {
             return Some(cached.clone());
@@ -388,7 +412,14 @@ pub async fn discover_and_build_fast(
     cancel_flag: Arc<AtomicBool>,
     on_progress: Option<Arc<dyn Fn(f32) + Send + Sync>>,
 ) -> TopologyGraph {
-    let result = discovery::discover_network_fast(subnet, max_concurrent, timeout_ms, cancel_flag.clone(), on_progress).await;
+    let result = discovery::discover_network_fast(
+        subnet,
+        max_concurrent,
+        timeout_ms,
+        cancel_flag.clone(),
+        on_progress,
+    )
+    .await;
 
     let device_classifier = DeviceClassification::new();
     let mut builder = TopologyGraphBuilder::new();
@@ -432,7 +463,10 @@ mod tests {
 
         let retrieved = graph.get_node(idx);
         assert!(retrieved.is_some());
-        assert_eq!(retrieved.unwrap().mac, Some("00:11:22:33:44:55".to_string()));
+        assert_eq!(
+            retrieved.unwrap().mac,
+            Some("00:11:22:33:44:55".to_string())
+        );
     }
 
     #[test]

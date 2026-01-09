@@ -4,7 +4,6 @@ use std::fs::{self, File};
 use std::env;
 use std::io::{BufReader, Read};
 use std::path::PathBuf;
-use std::process::Command;
 
 // Reads in a file with payloads based on port
 pub fn main() {
@@ -135,13 +134,6 @@ fn generate_code(port_payload_map: BTreeMap<Vec<u16>, Vec<u8>>) {
     generated_code.push_str("}\n");
 
     fs::write(dest_path, generated_code).unwrap();
-
-    // format the generated code
-    Command::new("cargo")
-        .arg("fmt")
-        .arg("--all")
-        .output()
-        .expect("Failed to execute cargo fmt");
 }
 
 /// Creates a BTreeMap of line numbers mapped to a Vec<u16> of ports

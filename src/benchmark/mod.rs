@@ -4,7 +4,7 @@
 //!
 //! ```rust
 //! // Initiate Benchmark vector
-//! # use rustscan::benchmark::{Benchmark, NamedTimer};
+//! # use SCANNR::benchmark::{Benchmark, NamedTimer};
 //! # use log::info;
 //! let mut bm = Benchmark::init();
 //! // Start named timer with name
