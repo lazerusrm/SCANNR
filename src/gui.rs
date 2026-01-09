@@ -224,7 +224,7 @@ impl Default for AppState {
             topology_widget: None,
             layout_type: LayoutType::ForceDirected,
             topology_stats: None,
-            scan_mode: ScanMode::Standard,
+            scan_mode: ScanMode::Quick,
             advanced_settings_open: false,
             batch_size: 3000,
             timeout_ms: 100,
