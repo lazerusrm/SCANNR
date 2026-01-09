@@ -38,6 +38,13 @@
 1. Download the latest `scannr-gui.exe` or `scannr-cli.exe` from our [releases page](https://github.com/lazerusrm/SCANNR/releases).
 2. Run and enjoy.
 
+### macOS (Intel & Apple Silicon)
+1. Download the latest `scannr-gui` or `scannr-cli` from our [releases page](https://github.com/lazerusrm/SCANNR/releases).
+   - For Intel Macs: download the `macos-x64` artifact
+   - For Apple Silicon Macs (M1/M2/M3): download the `macos-arm64` artifact
+2. Allow execution: `chmod +x scannr-gui-macos-*`
+3. Run: `./scannr-gui-macos-*`
+
 ### Building from Source
 Ensure you have the Rust toolchain installed, then:
 ```bash
