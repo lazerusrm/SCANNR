@@ -19,8 +19,8 @@
 # Key Features
 
 - **Extreme Speed:** Scans thousands of ports in seconds using the optimized RustScan engine.
-- **Modern "Liquid Glass" GUI:** A stunning, responsive interface with subtle, premium visual effects and full Light/Dark mode support.
-- **Passive Reconnaissance:** Automatically detects public subnets and offers a **Passive Scan** via Shodan InternetDB—no API key required. Get a hacker's-eye view of your external exposure silently.
+- **Modern GUI:** A stunning, responsive interface with full Light/Dark mode support.
+- **Passive Reconnaissance:** Shodan API Passive scanning integrated. Automatically detects public subnets and provides insights into external exposure.
 - **SSH Terminal Integration:** Seamlessly hand-off discovered SSH hosts to your system's native terminal (CMD/PowerShell/Terminal) with pre-filled credentials.
 - **Advanced Network Topology:**
     - **Interactive Map:** Visualize your network structure with router identification and device classification.
