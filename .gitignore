@@ -1,0 +1,28 @@
+# Rust/SCANNR build artifacts
+/target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# Logs
+*.log
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Build directories
+target/
+debug/
+release/
+
+# Export files
+scannr_export_*
